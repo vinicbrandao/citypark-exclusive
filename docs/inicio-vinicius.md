@@ -130,3 +130,87 @@ Pedir atualização diária: concluído, evidência, impedimento e próximo pass
 Branch por tarefa, commits pequenos e PR para main. Entregar novas migrations, testes, instruções e limitações. Não editar migrations publicadas. Mudanças de autorização passam por revisão técnica antes de integrar. Não enviar dados reais, tokens, backups ou JSONs grandes de imagens.
 
 Preferir PRs separados para login/prévia de importação, regras de calendário e painel mínimo. O objetivo é demonstrar: pessoa certa, unidade certa, módulo certo e janela publicada, mesmo com planejamento ainda incompleto.
+
+## Etapas após os primeiros cinco dias
+
+A sequência abaixo é o plano de evolução, não uma declaração de funcionalidades entregues. As durações são estimativas iniciais em dias úteis de desenvolvimento, com revisão disponível; recalibrar no encerramento do Dia 5. Pendências dos critérios anteriores devem ser resolvidas antes de liberar a etapa dependente. A TI pode preparar infraestrutura em paralelo.
+
+### Marco inicial Revisão do Dia 5
+
+Allef e Vinícius demonstram o fluxo de acesso, prévia de importação e calendário com dados fictícios. Registrar o que passou, falhou e ficou pendente. Só considerar a base concluída quando as regras funcionarem também pela API. Se homologação/SMTP ainda não estiverem disponíveis, avançar em desenvolvimento local sem considerar o envio real validado.
+
+### Etapa 1 Atendimento assistido e validação técnica
+
+Estimativa: 3 a 5 dias úteis após a base de acesso estar validada.
+
+- Vinícius implementa autorização de uma arquiteta por unidade, concessão pelo cliente e revogação. A autorização não concede poder para confirmar custos em nome do cliente.
+- Administrador poderá registrar autorização recebida fora do sistema, com referência à evidência em armazenamento privado. Definir com Allef quem pode consultar essa evidência e por quanto tempo será mantida.
+- Substituir o acesso amplo atual de architect ativo por políticas de leitura e escrita limitadas às unidades autorizadas. Atualizar os testes de equipe existentes; testar sessão já aberta após revogação.
+- Implementar validação técnica de uma revisão específica, com profissional, data e observação. Alteração das escolhas exige nova validação, preservando a anterior no histórico.
+- Allef e arquitetas revisam o processo, inclusive se a mesma profissional pode montar e validar as escolhas ou se haverá uma segunda revisora. Não presumir essa regra.
+
+Aceite: uma arquiteta autorizada atende somente a unidade permitida; não altera preço nem prazo; revogação bloqueia novas operações; validação antiga não aprova escolhas novas. Só então ativar arquitetas reais.
+
+### Etapa 2 Catálogo técnico e orçamento confiável
+
+Estimativa: 4 a 7 dias úteis, dependendo das definições de Allef. A preparação dos dados pode ocorrer em paralelo à etapa 1.
+
+- Allef entrega opções por tipologia/unidade, quantitativos do Revit, acabamentos, dependências técnicas e composições exportadas do laboratório. Identificar o que ainda não foi renderizado.
+- Vinícius leva o catálogo e as regras para o banco, com versões e edição de preços exclusiva de administradores. Calcular valores no backend; não aceitar total calculado pelo navegador como autoridade.
+- Definir preço por item, unidade de medida, quantidade, configuração padrão e adicional. Formalizar com Allef o tratamento de descontos, diferenças negativas e alterações de tabela de preços.
+- Vincular imagens às opções validadas sem alterar o significado de rascunhos existentes. Imagens faltantes continuam sinalizadas; não representar uma composição incompleta como pronta.
+- Preservar a versão do orçamento apresentado. Mudança de preço não altera silenciosamente uma proposta já confirmada.
+
+Aceite: um conjunto de unidades representativas confere com orçamento manual aprovado por Allef; tentativas de adulterar total, quantidade ou preço pelo cliente são rejeitadas; arquiteta continua sem edição de preços. Encerrar uso operacional de valores fictícios antes de contratar.
+
+### Etapa 3 Confirmação do cliente e fechamento por lote
+
+Estimativa: 3 a 5 dias úteis, após catálogo/orçamento e validação técnica confiáveis.
+
+- Separar os estados rascunho, aguardando validação técnica, validado, confirmado pelo cliente e encerrado para alterações. O calendário e o estado do pedido são informações distintas.
+- Definir se validação técnica é requisito antes de confirmar, se haverá período de correção e como uma pendência será tratada no encerramento. Allef aprova essas regras antes da implementação.
+- Mostrar ao cliente itens, quantitativos, total e condições aprovadas pela empresa antes da confirmação. Registrar no servidor autor, instante, revisão das escolhas e versão do orçamento.
+- Impedir confirmação duplicada, fora do prazo ou de revisão desatualizada. Não tratar salvamento de rascunho como compra.
+- Formalizar cancelamento, reabertura e exceção para venda tardia, sempre com responsável, motivo e histórico. Definir eventual assinatura/aceite com o setor responsável; não presumir que um clique atende a todos os requisitos contratuais.
+- No encerramento de um lote, congelar uma versão dos pedidos para preparação da compra. Rascunhos e pedidos não confirmados não entram automaticamente na compra.
+
+Aceite: cliente confirma exatamente a versão que revisou, dentro da janela autorizada; alterações posteriores exigem fluxo explícito; equipe consegue identificar quais unidades estão prontas para a compra parcial.
+
+### Etapa 4 Relatórios para compras e execução
+
+Estimativa: 2 a 4 dias úteis, após estabilizar as confirmações.
+
+- Consolidar pedidos confirmados por lote, torre, pavimento, unidade, módulo, opção, material e quantidade, com referência à versão da seleção.
+- Separar relatório de compra de materiais do relatório de execução por unidade. Mostrar pendências, unidades sem confirmação e padrões aplicáveis sem converter silêncio em compra.
+- Gerar exportação conferível pela equipe de orçamento e obra. Registrar emissão/versão para comparar correções posteriores.
+- Allef confere totais e uma amostra por unidade; compras e obra validam que os campos permitem executar o trabalho.
+
+Aceite: os totais consolidados reconciliam com os pedidos individuais e a revisão congelada do lote; nenhum rascunho ou item cancelado aparece como contratação confirmada. Esta etapa é indispensável para apoiar a compra parcial de drywall.
+
+### Etapa 5 Piloto controlado e preparação de produção
+
+Reservar uma janela de 5 a 10 dias úteis para observar o piloto, além do tempo necessário às correções. Não é promessa de lançamento nessa data.
+
+- Antes de convidar pessoas reais: homologação acessível, SMTP testado, regras de acesso revisadas, preços aprovados, backup e restauração demonstrados e nenhum defeito conhecido que permita acesso indevido.
+- Allef escolhe um grupo pequeno e autorizado que cubra tipologias e situações diferentes. Iniciar com simulação claramente identificada; contratação real somente após aprovação formal do processo pela empresa.
+- Verificar uso no celular, primeiro acesso, recuperação, atendimento assistido, leitura das opções, prazos, validação, confirmação e relatórios. Registrar falhas e dúvidas com responsável e prioridade.
+- TI decide destino de produção: Supabase hospedado ou implantação própria no servidor. Se houver transferência, ensaiar estrutura, dados, Auth, arquivos e configurações em ambiente separado; preparar corte e retorno.
+- Definir responsável por suporte, mudanças de e-mail, bloqueio de conta, manutenção, restauração e acompanhamento dos prazos da obra.
+
+Aceite: cenários representativos concluídos, falhas impeditivas corrigidas, restauração testada e aprovação de Allef/TI antes de expandir convites. Dados fictícios não devem entrar na produção.
+
+## Responsabilidades e acompanhamento após o Dia 5
+
+| Responsável | Entrega recorrente |
+| --- | --- |
+| Vinícius | Implementação em PRs pequenos, migrations, testes e demonstração por etapa |
+| Allef | Regras da obra, quantitativos, preços validados, agrupamentos/prazos e aceite funcional |
+| Arquitetas | Critérios de validação e teste do atendimento assistido |
+| TI | Homologação, SMTP, servidor, segredos, backups e operação |
+| Revisor técnico | Revisão de permissões, funções privilegiadas e integridade dos dados antes de integrar |
+
+Se não houver revisor técnico disponível, o estagiário mantém as mudanças em homologação até uma revisão adequada. A aprovação funcional de Allef não substitui a verificação técnica das permissões.
+
+Ao final de cada etapa, registrar: demonstração, critérios aprovados, pendências, responsável e próximo marco. Definir datas de entrega após medir a primeira semana. Não somar as estimativas como compromisso fechado: definições técnicas, infraestrutura e correções podem alterar a sequência.
+
+O resultado esperado antes da compra parcial é um fluxo completo e rastreável: unidade autorizada, janela publicada, escolha tecnicamente validada, orçamento aprovado, confirmação do cliente e relatório de compra por lote. O planejamento preliminar pode ser programado agora; a publicação dos prazos depende da decisão da obra.
