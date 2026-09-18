@@ -1,3 +1,5 @@
+> Registro histórico. GitHub já criado e acesso do Vinícius concedido. A ordem de trabalho atual está em [Roteiro vigente](inicio-vinicius.md): login, cadastros e calendários primeiro; autorizações das arquitetas depois.
+
 # City Park Exclusive
 
 ## Estado do projeto e plano de trabalho em equipe

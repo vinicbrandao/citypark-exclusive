@@ -1,5 +1,9 @@
 # City Park Exclusive
 
+## Comece por aqui
+
+Plano vigente: [Roteiro para Vinícius e Allef](docs/inicio-vinicius.md). Instalação, login, cadastros, calendários preliminares e homologação. Substitui a ordem de prioridades da passagem inicial.
+
 ## Login e progresso por unidade
 
 - Cada apartamento mantém suas próprias escolhas de planta e materiais.
@@ -44,7 +48,7 @@ Cada pessoa mantém seu próprio Docker e banco local com dados fictícios. Comp
 - Guia de passagem e plano de cinco dias: [docs/passagem-equipe-2026-09-18.md](docs/passagem-equipe-2026-09-18.md).
 - Laboratório genérico: `/exclusive/laboratorio-imagens.html`; projetos são compartilhados por exportação e importação JSON.
 - Contas de equipe fictícias: `admin.1@example.test` a `admin.3@example.test`, `architect.1@example.test` e `architect.2@example.test`.
-- As arquitetas fictícias ativas ainda acessam todas as unidades. A autorização por unidade é a próxima entrega; não ativar esse perfil para atendimento real antes dessa restrição.
+- As arquitetas fictícias ativas ainda acessam todas as unidades. A autorização por unidade permanece pendente; a prioridade atual é login, cadastros e calendários; não ativar esse perfil para atendimento real antes dessa restrição.
 - Não incluir no Git `.env.local`, credenciais, compradores, backups ou arquivos brutos de Revit/renders. Os arquivos em `assets/` são os recursos necessários para executar o protótipo.
 - Usar branches por tarefa e revisão antes de integrar alterações na `main`. Não alterar migrations já compartilhadas.
 
@@ -110,3 +114,4 @@ para representar corretamente a combinação bancada padrão + São Marco + roda
 ## Observação visual
 
 A prévia passou a usar `object-fit: contain` para privilegiar a visualização completa do ambiente, inclusive piso e forro.
+
