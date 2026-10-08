@@ -67,6 +67,8 @@ export function clearConfigurator() {
   savingUnits.clear();
   lastSavedUnitId = null;
   reviewOpen = false;
+  helpOpen = false;
+  helpArchitectId = null;
   Object.assign(state, DEFAULT_STATE, { accordions: { ...DEFAULT_STATE.accordions } });
   app.innerHTML = '';
 }
@@ -114,13 +116,16 @@ function selectApartment(apartmentId) {
     apartmentId, accordions: { ...DEFAULT_STATE.accordions }
   });
   reviewOpen = false;
+  helpOpen = false;
   render();
 }
 
 function showApartments() {
   rememberCurrentDraft();
+  backend?.editAfterSubmit?.clear();
   Object.assign(state, DEFAULT_STATE, { accordions: { ...DEFAULT_STATE.accordions } });
   reviewOpen = false;
+  helpOpen = false;
   render();
 }
 
@@ -177,6 +182,12 @@ function totalPrice() {
     + granitePricing().additionalCost;
 }
 function plantComplete() { return Boolean(state.socialPlant && state.suitePlant); }
+function choiceEnabled(key, value) {
+  if (!backend?.canEdit) return true;
+  const module = ['socialPlant', 'suitePlant'].includes(key) ? 'planta' : 'bancadas';
+  return backend.canEdit(state.apartmentId, module) &&
+    (!backend.isOptionAvailable || backend.isOptionAvailable(state.apartmentId, key, value));
+}
 function materialLabel(list, id, fallback = '—') { return find(list, id)?.title || fallback; }
 function materialCardMeta(item, key) {
   if (key === 'counter') return `${num(item.topArea)} m² de bancada · ${num(item.rodamaoLength)} m de comprimento de rodamão`;
@@ -188,7 +199,7 @@ function materialCardMeta(item, key) {
 
 async function saveProgress() {
   const apartmentId = state.apartmentId;
-  if (!backend || !DATA.apartments.some(apt => apt.id === apartmentId) || savingUnits.has(apartmentId)) return;
+  if (!backend || !DATA.apartments.some(apt => apt.id === apartmentId) || savingUnits.has(apartmentId)) return false;
   const requestVersion = mountVersion;
   const { savedAt: previousSave, ...selections } = normalizeDraft(state);
   savingUnits.add(apartmentId);
@@ -204,8 +215,11 @@ async function saveProgress() {
     }
     lastSavedUnitId = apartmentId;
     showToast('Progresso salvo na sua unidade.');
+    if (state.apartmentId === apartmentId) render();
+    return true;
   } catch (error) {
     if (requestVersion === mountVersion) showToast(error.message || 'Não foi possível salvar. Tente novamente.');
+    return false;
   } finally {
     if (requestVersion === mountVersion) savingUnits.delete(apartmentId);
   }
@@ -243,7 +257,7 @@ function leftNavHtml() {
       const available = id === 'plant' || id === 'counters';
       return `<button class="nav-item ${active ? 'active' : ''} ${available ? '' : 'disabled'}" data-nav="${id}" ${available ? '' : 'title="Catálogo ainda não liberado"'}><span>${icon}</span><b>${label}</b>${available ? '' : '<em>em breve</em>'}</button>`;
     }).join('')}</nav>
-    <div class="left-help"><span>?</span><div><b>PRECISA DE AJUDA?</b><small>Fale com a equipe do Exclusive.</small></div></div>
+    <button class="left-help" data-action="help"><span>?</span><div><b>PRECISA DE AJUDA?</b><small>Fale com a equipe do Exclusive.</small></div></button>
   </aside>`;
 }
 
@@ -331,7 +345,7 @@ function plantCatalogHtml() {
       <div><span>ALTERAÇÕES DA PLANTA</span><b>${state.plantGroup === 'social' ? 'Área social' : 'Suíte Master'}</b></div>
       <div class="segmented"><button class="${state.plantGroup === 'social' ? 'active' : ''}" data-plant-group="social">Área social</button><button class="${state.plantGroup === 'suite' ? 'active' : ''}" data-plant-group="suite">Suíte Master</button></div>
     </div>
-    <div class="catalog-cards plant-cards">${list.map(item => `<button class="catalog-card ${state[key] === item.id ? 'selected' : ''}" data-plant-choice="${key}" data-value="${item.id}">
+    <div class="catalog-cards plant-cards">${list.map(item => `<button class="catalog-card ${state[key] === item.id ? 'selected' : ''}" data-plant-choice="${key}" data-value="${item.id}" ${choiceEnabled(key, item.id) ? '' : 'disabled'}>
       <div class="card-check">${state[key] === item.id ? '✓' : ''}</div>
       <div class="card-copy"><b>${item.title}</b><p>${item.subtitle}</p><div class="card-tags">${item.tags.map(t => `<span>${t}</span>`).join('')}</div></div>
       <div class="card-price">${item.price ? '+' + brl(item.price) : 'Sem acréscimo'}</div>
@@ -400,7 +414,7 @@ function materialCatalogHtml() {
       <div><span>BANCADAS · ${state.environment === 'servico' ? 'SERVIÇO' : 'COZINHA'}</span><b>${group.title}</b><small>${group.subtitle}</small></div>
       <div class="segmented four"><button class="${state.materialGroup === 'counter' ? 'active' : ''}" data-material-group="counter">Configuração</button><button class="${state.materialGroup === 'stone' ? 'active' : ''}" data-material-group="stone">Granito</button><button class="${state.materialGroup === 'rodamao' ? 'active' : ''}" data-material-group="rodamao">Rodamão</button><button class="${state.materialGroup === 'service' ? 'active' : ''}" data-material-group="service">Serviço</button></div>
     </div>
-    <div class="catalog-cards material-cards">${group.list.map(item => `<button class="catalog-card visual-card ${state[group.key] === item.id ? 'selected' : ''}" data-material-choice="${group.key}" data-value="${item.id}">
+    <div class="catalog-cards material-cards">${group.list.map(item => `<button class="catalog-card visual-card ${state[group.key] === item.id ? 'selected' : ''}" data-material-choice="${group.key}" data-value="${item.id}" ${choiceEnabled(group.key, item.id) ? '' : 'disabled'}>
       ${item.thumb ? `<div class="card-image"><img src="${item.thumb}" alt="${item.title}"></div>` : '<div class="card-image text-icon">↕</div>'}
       <div class="card-copy"><b>${item.title}</b><p>${item.subtitle}</p>${item.badge ? `<div class="card-tags"><span>${item.badge}</span></div>` : ''}</div>
       <div class="card-price">${materialCardMeta(item, group.key)}</div>
@@ -452,14 +466,78 @@ function reviewHtml() {
       <section><h3>Bancadas</h3><p><span>Configuração</span><b>${materialLabel(DATA.materials.counter, state.counter)}</b></p><p><span>Granito</span><b>${materialLabel(DATA.materials.stone, state.stone)} · ${brl(stone.unitPrice)}/m²</b></p><p><span>Rodamão</span><b>${materialLabel(DATA.materials.rodamao, state.rodamao)}</b></p><p><span>Serviço</span><b>${materialLabel(DATA.materials.service, state.service)}</b></p><p><span>Área total de granito</span><b>${num(pricing.totalArea)} m²</b></p><p><span>Acréscimo de bancadas</span><b>${brl(pricing.additionalCost)}</b></p></section>
     </div>
     <div class="review-total"><span>Valor adicional</span><strong>${brl(totalPrice())}</strong></div>
+    ${proposalWorkflowHtml()}
     <button class="review-primary" data-action="close-review">Voltar ao configurador</button>
   </div></div>`;
 }
 
 let reviewOpen = false;
+let helpOpen = false;
+let helpArchitectId = null;
+let workflowBusy = false;
+const safe = value => String(value ?? '').replace(/[&<>"']/g, char => ({
+  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+}[char]));
+
+function proposalWorkflowHtml() {
+  if (!backend?.onSubmit) return '';
+  const proposal = backend.proposals?.[state.apartmentId];
+  const editing = backend.editAfterSubmit.has(state.apartmentId);
+  const open = proposal?.dbStatus === 'open';
+  const reviewed = proposal?.dbStatus === 'reviewed';
+  const limitReached = open && proposal.latest_revision >= 4;
+  const nextSubmission = proposal ? proposal.latest_revision + 1 : 1;
+  return `<section class="exclusive-workflow"><h3>Proposta de alteração</h3>
+    ${proposal ? `<p>Proposta ${proposal.cycle_number} · envio ${proposal.latest_revision}/4 · ${safe(proposal.statusLabel)}.</p>
+      ${proposal.review?.note ? `<p>Parecer: ${safe(proposal.review.note)}</p>` : ''}
+      ${open && proposal.pendingChanges ? '<p><strong>Há alterações salvas que ainda não foram enviadas à arquiteta.</strong></p>' : ''}
+      ${limitReached ? '<p>Limite de 3 alterações atingido. Aguarde o parecer da arquiteta para iniciar uma nova proposta.</p>' : ''}`
+      : '<p>Depois de conferir as escolhas, envie a proposta para análise da arquiteta.</p>'}
+    ${!backend.staffRole && !proposal ? '<button data-action="submit-proposal">Enviar proposta à arquiteta</button>' : ''}
+    ${!backend.staffRole && open && !limitReached ? `<button data-action="edit-proposal">${editing ? 'Edição da proposta aberta' : 'Alterar proposta'}</button>
+      ${editing ? `<button data-action="submit-proposal">Enviar alteração ${nextSubmission}/4</button>` : ''}` : ''}
+    ${!backend.staffRole && reviewed ? `<button data-action="edit-proposal">${editing ? 'Nova proposta em edição' : 'Preparar nova proposta'}</button>
+      <button data-action="submit-proposal">Enviar nova proposta</button>` : ''}
+    ${backend.staffRole === 'architect' && open && !proposal.review && !proposal.pendingChanges ? `<label for="technical-note">Observação para o cliente</label><textarea id="technical-note" rows="3"></textarea>
+      <div class="exclusive-workflow-actions"><button data-action="review-approved">Confirmar viabilidade</button><button data-action="review-changes">Solicitar alteração</button></div><small>O parecer técnico encerra este ciclo de proposta e não é a aprovação comercial final.</small>` : ''}
+    ${backend.staffRole === 'architect' && open && proposal.pendingChanges ? '<p>O cliente possui alterações salvas ainda não reenviadas. Aguarde o novo envio antes de registrar o parecer.</p>' : ''}
+    <p><button data-action="help">${backend.staffRole ? 'Ver atendimento' : 'Pedir ajuda à arquiteta'}</button></p>
+  </section>`;
+}
+
+function helpHtml() {
+  const unitId = state.apartmentId;
+  const active = backend?.help?.[unitId];
+  const architects = backend?.architects?.[unitId] || [];
+  const authorized = architects.find(item => item.user_id === (active?.architect_user_id || helpArchitectId))?.authorized;
+  return `<div class="review-overlay"><div class="review-modal exclusive-help-modal">
+    <button class="close-review" data-action="close-help">×</button>
+    <span class="review-kicker">ATENDIMENTO</span><h2>Ajuda da arquiteta</h2>
+    ${active ? `<p>Pedido ${active.status === 'requested' ? 'enviado; aguardando aceite' : 'em atendimento'}.</p>
+      ${backend.staffRole === 'architect' ? `<button class="review-primary" data-action="${active.status === 'requested' ? 'accept-help' : 'resolve-help'}">${active.status === 'requested' ? 'Aceitar pedido' : 'Concluir atendimento'}</button>`
+        : '<button class="review-primary" data-action="cancel-help">Cancelar pedido</button>'}`
+      : backend.staffRole ? '<p>Nenhum pedido de ajuda aberto nesta unidade.</p>'
+        : architects.length ? `<p>Escolha a arquiteta designada para esta unidade.</p><label for="help-architect">Arquiteta</label>
+          <select id="help-architect">${architects.map(item => `<option value="${item.user_id}" ${item.user_id === helpArchitectId ? 'selected' : ''}>${safe(item.name)}${item.authorized ? ' · autorizada' : ''}</option>`).join('')}</select>
+          <button class="review-primary" data-action="request-help">Pedir ajuda</button>`
+        : '<p>Não há arquiteta designada para esta unidade no momento.</p>'}
+    ${!backend.staffRole && authorized ? '<button class="review-primary" data-action="revoke-architect">Revogar autorização da arquiteta</button>' : ''}
+    <small>O pedido não envia aviso externo. A arquiteta o verá ao acessar esta unidade. Cancelar o pedido não revoga a autorização de acesso.</small>
+    <button class="review-primary" data-action="close-help">Voltar ao configurador</button>
+  </div></div>`;
+}
+
+async function runWorkflow(operation, success) {
+  if (workflowBusy) return;
+  workflowBusy = true;
+  try { await operation(); showToast(success); render(); }
+  catch (error) { showToast(error.message || 'Não foi possível concluir. Tente novamente.'); }
+  finally { workflowBusy = false; }
+}
 function render() {
   app.innerHTML = state.apartmentId ? configuratorHtml() : unitModalHtml();
   if (reviewOpen) app.insertAdjacentHTML('beforeend', reviewHtml());
+  if (helpOpen) app.insertAdjacentHTML('beforeend', helpHtml());
   bindEvents();
 }
 
@@ -476,6 +554,35 @@ function bindEvents() {
     if (action === 'review') { reviewOpen = true; render(); }
     if (action === 'close-review') { reviewOpen = false; render(); }
     if (action === 'resume') selectApartment(lastSavedUnitId);
+    if (action === 'help') {
+      reviewOpen = false; helpOpen = true; render();
+      backend?.loadArchitects?.(state.apartmentId).then(architects => {
+        helpArchitectId = architects[0]?.user_id || null; if (helpOpen) render();
+      }).catch(error => showToast(error.message || 'Não foi possível carregar as arquitetas.'));
+    }
+    if (action === 'close-help') { helpOpen = false; render(); }
+    if (action === 'submit-proposal') runWorkflow(async () => {
+      if (!await saveProgress()) throw new Error('Salve as escolhas antes de enviar.');
+      await backend.onSubmit(state.apartmentId);
+    }, 'Proposta enviada à arquiteta. A equipe retornará assim que possível.');
+    if (action === 'edit-proposal') {
+      try {
+        backend.onEditProposal(state.apartmentId); reviewOpen = false; render();
+        showToast('Você pode alterar os módulos ainda dentro do prazo.');
+      } catch (error) { showToast(error.message || 'Não foi possível abrir a edição.'); }
+    }
+    if (action === 'request-help') runWorkflow(() => backend.onRequestHelp(state.apartmentId,
+      document.querySelector('#help-architect')?.value || helpArchitectId), 'Pedido de ajuda enviado.');
+    if (action === 'cancel-help') runWorkflow(() => backend.onCancelHelp(state.apartmentId), 'Pedido de ajuda cancelado.');
+    if (action === 'revoke-architect') runWorkflow(() => backend.onRevokeArchitect(state.apartmentId,
+      backend.help?.[state.apartmentId]?.architect_user_id || helpArchitectId), 'Autorização da arquiteta revogada.');
+    if (action === 'accept-help') runWorkflow(() => backend.onAcceptHelp(state.apartmentId), 'Pedido de ajuda aceito.');
+    if (action === 'resolve-help') runWorkflow(() => backend.onResolveHelp(state.apartmentId), 'Atendimento concluído.');
+    if (action === 'review-approved' || action === 'review-changes') {
+      const note = document.querySelector('#technical-note')?.value.trim() || null;
+      runWorkflow(() => backend.onReview(state.apartmentId,
+        action === 'review-approved' ? 'approved' : 'changes_requested', note), 'Parecer técnico registrado.');
+    }
   }));
   document.querySelectorAll('[data-nav]').forEach(btn => btn.addEventListener('click', () => {
     const nav = btn.dataset.nav;
@@ -487,9 +594,15 @@ function bindEvents() {
     state.accordions[btn.dataset.accordion] = !state.accordions[btn.dataset.accordion]; render();
   }));
   document.querySelectorAll('[data-plant-group]').forEach(btn => btn.addEventListener('click', () => { state.plantGroup = btn.dataset.plantGroup; render(); }));
-  document.querySelectorAll('[data-plant-choice]').forEach(btn => btn.addEventListener('click', () => { state[btn.dataset.plantChoice] = btn.dataset.value; render(); }));
+  document.querySelectorAll('[data-plant-choice]').forEach(btn => btn.addEventListener('click', () => {
+    if (!choiceEnabled(btn.dataset.plantChoice, btn.dataset.value)) return;
+    state[btn.dataset.plantChoice] = btn.dataset.value; render();
+  }));
   document.querySelectorAll('[data-material-group]').forEach(btn => btn.addEventListener('click', () => { state.materialGroup = btn.dataset.materialGroup; render(); }));
-  document.querySelectorAll('[data-material-choice]').forEach(btn => btn.addEventListener('click', () => { state[btn.dataset.materialChoice] = btn.dataset.value; render(); }));
+  document.querySelectorAll('[data-material-choice]').forEach(btn => btn.addEventListener('click', () => {
+    if (!choiceEnabled(btn.dataset.materialChoice, btn.dataset.value)) return;
+    state[btn.dataset.materialChoice] = btn.dataset.value; render();
+  }));
   document.querySelectorAll('[data-environment]').forEach(btn => btn.addEventListener('click', () => {
     const env = btn.dataset.environment;
     if (env === 'cozinha') { state.environment = 'cozinha'; if (state.materialGroup === 'service') state.materialGroup = 'counter'; render(); }

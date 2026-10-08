@@ -57,6 +57,7 @@ button { font: inherit; }
 .nav-item.active { background: rgba(178,133,67,.34); box-shadow: inset 3px 0 0 var(--gold); }
 .nav-item.disabled { opacity: .48; }
 .left-help { margin-top: auto; border-top: 1px solid rgba(255,255,255,.08); padding: 18px 10px 0; display: flex; gap: 10px; align-items: center; }
+.left-help { width:100%; border:0; border-top:1px solid rgba(255,255,255,.08); background:none; color:inherit; font:inherit; text-align:left; cursor:pointer; }
 .left-help > span { width: 32px; height: 32px; border: 1px solid #b7935e; border-radius: 50%; display: grid; place-items: center; }
 .left-help b { display:block; color:#d7a95e; font-size:10px; }
 .left-help small { display:block; color:#c3c5c4; font-size:10px; margin-top:4px; }
@@ -175,6 +176,15 @@ button { font: inherit; }
 .review-total span { font-size:10px; }
 .review-total strong { font-family:'Playfair Display',serif; font-size:28px; }
 .review-primary { margin-top:14px; width:100%; border:0; border-radius:9px; background:var(--gold); color:white; padding:12px; font-weight:800; }
+.exclusive-workflow { border-top:1px solid var(--line); margin-top:18px; padding-top:16px; }
+.exclusive-workflow h3 { font-family:'Playfair Display',serif; margin:0 0 8px; }
+.exclusive-workflow p,.exclusive-help-modal p { color:var(--muted); font-size:12px; line-height:1.5; }
+.exclusive-workflow button { border:1px solid var(--gold); border-radius:8px; background:#fbfaf7; color:#805b29; padding:10px 13px; font-weight:700; cursor:pointer; }
+.exclusive-workflow label,.exclusive-help-modal label { display:block; margin:12px 0 6px; font-size:12px; font-weight:700; }
+.exclusive-workflow textarea,.exclusive-help-modal select { width:100%; border:1px solid var(--line); border-radius:8px; padding:10px; background:white; font:12px Inter,sans-serif; }
+.exclusive-workflow-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+.exclusive-workflow small,.exclusive-help-modal small { display:block; margin-top:10px; color:var(--muted); font-size:10px; }
+.catalog-card:disabled { cursor:default; opacity:.65; }
 .toast { position:fixed; right:20px; top:92px; z-index:200; background:#252a2c; color:white; border-radius:9px; padding:11px 14px; box-shadow:0 12px 28px rgba(0,0,0,.18); font-size:11px; }
 @media (max-width: 1100px) {
   :root { --left-w: 170px; --right-w: 300px; }

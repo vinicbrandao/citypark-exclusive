@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { mountConfigurator, clearConfigurator } from '../app.js';
+import { createLegacyAdapter } from './legacy-adapter.js';
 import '../styles.css';
 
 const root = document.querySelector('#app');
@@ -119,7 +120,16 @@ async function signOut() {
 }
 async function openSession(session) {
   const userId = session?.user?.id || null;
-  if (userId && definingPassword) { currentUserId = userId; busy = false; clearConfigurator(); showPasswordForm(); return; }
+  if (userId && definingPassword) {
+  // Preserva o formulário em eventos repetidos da mesma sessão.
+  if (userId === currentUserId && document.querySelector('#password-form')) return;
+  ++generation;
+  currentUserId = userId;
+  busy = false;
+  clearConfigurator();
+  showPasswordForm();
+  return;
+  }
   if (!userId) { definingPassword = false; sessionStorage.removeItem('exclusive-define-password'); }
   if (userId && userId === currentUserId) return; // Token refresh must not discard edits.
   const request = ++generation;
@@ -128,42 +138,20 @@ async function openSession(session) {
   if (!userId) { busy = false; pendingEmail = ''; showLogin(); return; }
   shell('<h1>Carregando suas unidades…</h1>');
   try {
-    const [unitsResult, draftsResult, staffResult] = await Promise.all([
-      client.from('units').select('id,code,tower,floor_label,termination,typology').order('code'),
-      client.from('unit_drafts').select('unit_id,selections,revision,updated_at'),
+    const [unitsResult, staffResult] = await Promise.all([
+      client.from('units').select('id').limit(1),
       client.rpc('current_staff_role')
     ]);
     if (request !== generation) return;
-    if (unitsResult.error || draftsResult.error || staffResult.error) throw (unitsResult.error || draftsResult.error || staffResult.error);
+    if (unitsResult.error || staffResult.error) throw (unitsResult.error || staffResult.error);
     if (!unitsResult.data.length) {
       shell('<h1>Acesso em preparação</h1><p>Seu login foi reconhecido, mas ainda não há unidades liberadas para você. Entre em contato com a equipe do Exclusive.</p><button id="logout" class="auth-primary">Sair</button>');
       document.querySelector('#logout').onclick = signOut;
       return;
     }
-    const revisions = new Map(draftsResult.data.map(draft => [draft.unit_id, draft.revision]));
-    mountConfigurator({
-      staffRole: staffResult.data,
-      units: unitsResult.data.map(unit => ({
-        id: unit.id, label: escapeHtml(unit.code), tower: escapeHtml(unit.tower),
-        floor: escapeHtml(unit.floor_label), termination: escapeHtml(unit.termination), type: escapeHtml(unit.typology),
-        situation: ['09A', '10A'].includes(unit.termination) ? `${import.meta.env.BASE_URL}assets/situacao/${unit.termination}.jpg` : null,
-        plantDeadline: 'A definir'
-      })),
-      savedDrafts: draftsResult.data,
-      onSignOut: signOut,
-      onSave: async (unitId, selections) => {
-        const { data, error } = await client.rpc('save_unit_draft', {
-          p_unit_id: unitId, p_selections: selections, p_expected_revision: revisions.get(unitId) || 0
-        });
-        if (error) {
-          throw new Error(error.code === '40001'
-            ? 'Esta unidade foi alterada em outra sessão. Copie suas escolhas e reabra a página antes de salvar novamente.'
-            : 'Não foi possível salvar. Verifique a conexão e se seu acesso continua liberado.');
-        }
-        revisions.set(unitId, data.revision);
-        return data.updated_at;
-      }
-    });
+    const adapter = await createLegacyAdapter({ client, staffRole: staffResult.data, onSignOut: signOut });
+    if (request !== generation) return;
+    mountConfigurator(adapter);
   } catch (error) {
     if (request !== generation) return;
     console.error('Falha ao carregar unidades:', error.message);
