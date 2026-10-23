@@ -96,7 +96,13 @@ for (const entry of assignments) {
 
 const opensAt = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 const closesAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+// Explicit demonstration metadata; never infer official areas from a unit code.
+const demoAreas = { '1209A': 99.90 };
 for (const unitCode of assignments.flatMap(entry => entry.units)) {
+  check(await admin.from('units').update({
+    customization_closes_at: closesAt,
+    ...(demoAreas[unitCode] ? { area_m2: demoAreas[unitCode] } : {})
+  }).eq('id', byCode.get(unitCode).id));
   for (const module_code of ['planta', 'bancadas']) {
     check(await admin.from('unit_module_windows').upsert({
       unit_id: byCode.get(unitCode).id, module_code,

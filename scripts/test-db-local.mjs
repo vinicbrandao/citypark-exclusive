@@ -5,6 +5,7 @@ const cases = [
   ['Escolhas por módulo', 'test-module-choices-local.sql'],
   ['Pedido de ajuda', 'test-architect-assistance-local.sql'],
   ['Proposta e revisões', 'test-unit-proposals-local.sql'],
+  ['Prazo final da unidade', 'test-unit-deadline-local.sql'],
 ];
 
 for (const [label, filename] of cases) {

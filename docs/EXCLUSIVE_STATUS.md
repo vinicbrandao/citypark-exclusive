@@ -16,7 +16,7 @@
 
 - **Projeto:** CityPark Exclusive
 - **Checkpoint criado em:** 05/10/2026
-- **Último ciclo de desenvolvimento registrado:** 05/10/2026
+- **Última atualização do checkpoint:** 21/10/2026 — layout e imagens de Bancadas na seção 54; expansão da prévia na seção 53; tela estática na seção 52.
 - **Responsável técnico principal:** Vini
 - **Supervisor:** Allef
 
@@ -974,6 +974,8 @@ depois cadastrar o catálogo aprovado, integrar a interface ao novo salvamento e
 
 # 42. Ciclos de proposta e limite de alterações — 07/10/2026
 
+> Registro histórico. A validação no banco e no navegador foi concluída em 19/10/2026; consultar a seção 44.
+
 ## REGRA DECIDIDA E IMPLEMENTAÇÃO PREPARADA
 
 - Regra definida por Vini: cada ciclo de proposta permite **1 envio inicial + até 3 alterações reenviadas**, totalizando no máximo **4 versões submetidas**.
@@ -1002,3 +1004,245 @@ depois cadastrar o catálogo aprovado, integrar a interface ao novo salvamento e
 No computador de desenvolvimento com Docker Desktop e Supabase local ativos: aplicar a migration nova, executar `npm run test:db-local`, abrir a interface e testar manualmente o ciclo completo 1/4 → 2/4 → 3/4 → 4/4 → parecer → nova proposta 1/4. Somente depois atualizar este checkpoint para **IMPLEMENTADO E TESTADO NO BANCO LOCAL**.
 
 **Fim do checkpoint.**
+
+---
+
+# 43. Próximos passos e orientação de retomada — 19/10/2026
+
+## Estado conferido nesta sessão
+
+- Login, vínculos cliente/unidade, escolhas por módulo, prazos, autorização e atendimento da arquiteta, envio e parecer técnico possuem implementação local. As telas principais aprovadas devem ser preservadas; conectar funções aos controles existentes sem redesenhar o configurador.
+- O ponto de entrada atual é `src/main.js`, que monta `app.js` e utiliza `src/configurator-adapter.js`. O antigo `src/legacy-adapter.js` está removido na árvore de trabalho atual. O adaptador atual usa o modelo por módulos e ainda mapeia opções aos códigos `DEMO-*`.
+- Existem arquivos das migrations `20261007000100_proposal_cycles_and_edit_limit.sql` e `20261007194940_fix_proposal_version_constraint.sql`. A presença dos arquivos não comprova sua aplicação no banco. A última confirmação documental da aplicação local é anterior a essas duas migrations.
+- Em 19/10/2026, `npm test` passou com **17 testes JavaScript** e `npm run build` concluiu. Isso atualiza a limitação de build descrita na seção 42. Não foram executados testes SQL nem navegação nesta sessão; o ciclo completo ainda precisa de confirmação no banco local.
+- Há alterações locais não commitadas, incluindo troca do adaptador, ajustes em `app.js` e teste de proposta. `scripts/seed-staff-local.mjs` aparece removido, embora guias antigos ainda o indiquem. Conferir essas diferenças antes de usar instruções antigas; preservar o trabalho existente.
+- Os registros anteriores sobre portas, versões de propostas e dados das unidades representam o instante de cada teste. Consultar o estado atual ao retomar. Dados oficiais, implantação compartilhada e aprovação final continuam pendentes.
+
+## Próximo passo: validar os ciclos de proposta no ambiente local
+
+**Executar somente na próxima sessão de trabalho. Nesta atualização, Vini solicitou apenas registrar a continuidade e encerrar.**
+
+1. Ler esta seção, a seção 42 e as alterações atuais em `app.js`, `src/main.js`, `src/configurator-adapter.js` e `tests/proposal-workflow.test.cjs`. Conferir `git status` e eventuais instruções do repositório.
+2. Conferir Docker/Supabase local e comparar o histórico aplicado com os arquivos de migrations. Se as duas migrations de 07/10 estiverem pendentes, revisá-las e aplicar somente as pendentes com `npx supabase migration up --local`. Não reaplicar versões já registradas nem executar reset para contornar diferenças.
+3. Executar `npm run test:db-local`. Corrigir falhas concretas, preservando os dados existentes. Testar salvamento sem consumir envio, reenvio por owner/co_owner, concorrência, bloqueio no quarto envio, prazo por módulo, isolamento de unidades e parecer sobre a versão corrente.
+4. Abrir a interface com `npm run dev`, usando a porta informada pelo Vite. Com dados fictícios, demonstrar `1/4 → salvar rascunho sem aumentar a contagem → reenviar 2/4 → 3/4 → 4/4 → bloqueio → parecer → novo ciclo 1/4`. Conferir também que o parecer falha quando há alterações salvas ainda não reenviadas e que os ciclos anteriores permanecem no histórico.
+5. Confirmar o funcionamento da interface com o adaptador atual e preservar o layout aprovado. Registrar migrations realmente aplicadas, testes executados e limitações. Só então marcar os ciclos como **IMPLEMENTADOS E TESTADOS NO BANCO LOCAL**.
+
+## Ordem das entregas seguintes
+
+1. **Consolidar a base atual:** concluir a validação acima, revisar as alterações locais e atualizar instruções, scripts e documentação que ainda descrevem estados antigos.
+2. **Administração e calendário:** implementar a operação administrativa de clientes/unidades, atribuição de plantas e arquitetas, catálogo e prazos. Evoluir janelas existentes para planejamento, publicação e histórico de alterações por módulo/unidade ou lote.
+3. **Catálogo oficial:** receber da equipe CityPark/Allef as plantas base, atribuições por unidade, opções e compatibilidades, renders e quantitativos. Conferir a diferença de descrição da opção com ilha antes de oficializar nomes. Substituir o mapeamento `DEMO-*` por correspondências aprovadas sem alterar a interface principal.
+4. **Orçamento e fechamento:** definir preços e vigências, calcular no servidor, preservar o orçamento apresentado e implementar confirmação do cliente/aprovação final após o parecer técnico. Os valores atuais do frontend são fictícios.
+5. **Comunicação:** definir destinatários e canais e implementar avisos de envio, reenvio, pedido de ajuda e parecer. Atualmente há mensagens e registros dentro do sistema; envio externo ainda não está concluído.
+6. **Homologação e ativação:** preparar Supabase exclusivo compartilhado, hospedagem, configuração de Auth e SMTP real; validar com contas controladas, importar compradores reais após revisão e realizar a jornada completa antes da liberação.
+7. **Evolução visual e operacional:** completar renders, módulos ainda indisponíveis e consulta do histórico conforme os dados aprovados. Ampliar testes de navegação e operação sem redesenhar as telas já aprovadas.
+
+## Instrução para a próxima sessão
+
+> Retome pela seção 43 do EXCLUSIVE_STATUS.md. Comece conferindo o estado das migrations e validando os ciclos de proposta no Supabase local. Preserve a interface aprovada, as alterações existentes e o uso de dados fictícios. Não trate o código preparado como validado no banco sem evidência. Conclua essa validação antes de iniciar as entregas seguintes.
+
+**Fim do checkpoint — próxima execução adiada a pedido de Vini.**
+
+---
+
+# 44. Ciclos validados no banco e na interface — 19/10/2026
+
+## IMPLEMENTADO E TESTADO NO BANCO LOCAL E NO NAVEGADOR
+
+- Vini retomou o trabalho com Docker Desktop e Supabase local iniciados. Conferido o histórico: **20 migrations aplicadas**, incluindo `20261007000100_proposal_cycles_and_edit_limit.sql` e `20261007194940_fix_proposal_version_constraint.sql`. Nenhuma migration precisou ser aplicada ou reaplicada nesta retomada.
+- `npm run test:db-local` passou para escolhas por módulo, pedidos de ajuda e ciclos de proposta. As fixtures SQL foram revertidas. Os testes cobrem também vínculos, isolamento de unidades, revisão desatualizada, compatibilidade, prazo de Planta e independência dos módulos.
+- Criado `scripts/test-proposal-ui-local.mjs`, executável por `npm run test:proposal-ui-local`: teste de navegação real em Edge headless contra a aplicação e o Supabase locais, com verificação adicional dos registros no PostgreSQL.
+- Jornada completa aprovada: salvar antes de enviar não cria proposta; envio inicial 1/4; salvar alterações mantém 1/4; tentativa de parecer com rascunho ainda não reenviado é rejeitada; reenvio 2/4; coproprietário reenvia a mesma proposta em 3/4; quarto envio bloqueia edição de cliente e arquiteta; parecer encerra o ciclo; cliente inicia ciclo 2 em 1/4. Os dois ciclos e as cinco versões estavam preservados antes da limpeza das fixtures.
+- O teste usa os clientes fictícios da 1401A, uma unidade temporária com catálogo `DEMO-*` e uma conta temporária de arquiteta. A senha atual da arquiteta fictícia existente difere da senha histórica do seed; ela não foi alterada. A conta temporária permite testar sem depender dessa senha.
+- Após os testes, confirmado: **9 unidades originais, 0 unidades E2E e 0 contas temporárias de arquiteta**. Somente registros criados pelo próprio teste foram removidos.
+- Corrigidas no adaptador as mensagens de erro de alterações ainda não reenviadas, reenvio sem mudanças e limite atingido. O parecer agora apresenta essas mensagens em português. As telas principais e o CSS aprovado não foram alterados.
+- Verificação final: **17 testes JavaScript passaram**, build de produção concluído e `git diff --check` sem erros de whitespace. Captura do layout aprovado em `outputs/qa/proposal-cycle-local.png` (artefato local ignorado pelo Git).
+
+## Repetir a validação quando houver alteração no fluxo
+
+1. Manter Docker/Supabase local e a aplicação Vite iniciados. Os testes não executam seed nem reset do banco.
+2. Executar `npm run test:db-local`.
+3. Para a jornada de navegador, disponibilizar o pacote Playwright no ambiente ou informar seu diretório absoluto em `CITYPARK_PLAYWRIGHT_PATH`, e executar `npm run test:proposal-ui-local`. O teste usa Edge instalado; `CITYPARK_BROWSER_CHANNEL` permite escolher outro canal compatível. `CITYPARK_UI_URL` permite informar a porta local mostrada pelo Vite. URLs remotas são rejeitadas.
+4. As contas fictícias `cliente.d@example.test` e `cliente.e@example.test` precisam estar disponíveis com a senha local de demonstração, ou informar a senha dessas contas em `CITYPARK_DEMO_PASSWORD`. O teste cria e remove sua própria arquiteta e unidade; preserva as unidades de demonstração existentes.
+
+## Próximo passo de desenvolvimento
+
+**A validação dos ciclos está concluída. Retomar pela consolidação da base antes do painel administrativo.**
+
+1. Revisar as diferenças locais existentes e atualizar README/guias para o adaptador atual e os comandos que realmente existem. Conferir especialmente a remoção prévia de `scripts/seed-staff-local.mjs` e as referências antigas a esse comando. Não restaurar ou apagar trabalho anterior por suposição.
+2. Documentar o procedimento atual de instalação, criação dos dados fictícios e testes. Conferir que os scripts de acesso e equipe usam as regras atuais por módulo e autorização, pois alguns foram escritos para RPCs legados já revogados.
+3. Depois dessa consolidação, iniciar administração e calendário conforme a ordem da seção 43: atribuições de plantas e arquitetas, prazos por módulo/unidade, publicação e histórico. Preservar o layout aprovado; definir os controles administrativos necessários conforme o fluxo real.
+4. Dados oficiais, orçamento no servidor, confirmação final, notificações externas e homologação permanecem nas etapas posteriores. Não apresentar o parecer técnico como aprovação final nem os valores fictícios como orçamento oficial.
+
+**Fim do checkpoint — ciclos concluídos; próxima entrega: consolidar scripts e documentação.**
+
+---
+
+# 45. Seleção de apartamentos do cliente — 20/10/2026
+
+## Orientação vigente do Vini
+
+- O foco passou a ser a experiência visual e interativa, começando pelo cliente. Os wireframes `escolher-apartamento-1.png` e `escolher-apartamento-2.png` são a base oficial da composição da seleção de unidades, preservando a identidade visual do Exclusive em cores e fontes.
+- A autorização desta etapa abrange essa tela e a regra do prazo final. A edição do prazo pelo painel administrativo foi explicitamente adiada. Não iniciar esse painel nesta entrega.
+
+## Implementado
+
+- Título e cartões centralizados. Uma unidade ocupa um cartão central; várias unidades ficam em duas colunas no desktop, seguindo para as linhas seguintes. No celular, ficam em uma coluna sem rolagem horizontal.
+- Destaque do código da unidade, com separação visual da torre (ex.: `1209 A`); abaixo, torre, andar, tipologia e área em m² em texto mais discreto. Imagem de localização preservada, sem distorção.
+- O cartão é um `article`; imagem, texto e bordas não abrem a unidade. Somente o botão “Acessar unidade” faz isso, inclusive pelo teclado. O atalho “Continuar unidade” foi retirado da seleção do cliente para respeitar essa regra. A seleção da equipe mantém seu fluxo anterior.
+- Prazo final no canto inferior direito do cartão, com data/hora em America/Sao_Paulo. Unidade vencida continua acessível para consulta e é identificada como tal. “Voltar ao login” encerra a sessão.
+- Migration `20261020000100_unit_area_and_final_deadline.sql` aplicada ao Supabase local: **21 migrations aplicadas**. Adiciona `units.area_m2` (positiva ou nula) e `units.customization_closes_at` (limite exclusivo). Clientes não têm permissão de alterar esses campos.
+- O prazo final bloqueia escolhas de todos os módulos e envio/reenvio de proposta no servidor, usando `clock_timestamp()` e rollback integral do RPC. Aplica-se também à arquiteta que edita pela unidade. O parecer sobre uma proposta já enviada continua permitido depois do vencimento.
+- O prazo geral convive com as janelas por módulo: vale o limite que encerrar primeiro. Campo geral nulo não apaga nem contorna os prazos de módulos existentes. O navegador bloqueia os controles automaticamente quando o prazo final vence com a sessão aberta.
+- Áreas e prazos não foram inferidos do wireframe nem dos códigos das unidades. Campos não cadastrados aparecem como “Área a confirmar” e “A definir”. O seed local foi preparado para oferecer metadados explicitamente fictícios (área de demonstração da 1209A e prazo geral de 30 dias), mas não foi reexecutado nesta entrega para evitar sobrescrever senhas e prazos anteriores.
+
+## Verificação concluída
+
+- `npm test`: **17 testes passaram**. `npm run build` concluído.
+- `npm run test:db-local`: **quatro grupos passaram**, incluindo o novo `scripts/test-unit-deadline-local.sql`. Verificadas rejeição de alterações em dois módulos, bloqueio de envio inicial e reenvio vencidos, leitura após vencimento, rejeição de mudança de prazo pelo cliente, atuação da arquiteta, área inválida e ausência de gravação parcial após falhas. Fixtures revertidas.
+- `npm run test:apartments-ui-local`: jornada real de navegador aprovada com uma, quatro e cinco unidades; clique fora do botão; acesso pelo teclado; dados ausentes; alinhamento do cabeçalho e uma coluna no celular; unidade vencida em consulta; bloqueio de Planta/Bancadas/salvamento/envio; vencimento durante sessão; logout. O script cria e remove seu próprio cliente e cinco unidades temporárias.
+- `npm run test:proposal-ui-local`: ciclo completo 1/4 até 4/4, parecer e novo ciclo 1/4 passou novamente com a nova tela e migration.
+- Capturas conferidas em `outputs/qa/apartment-selection-single.png`, `apartment-selection-grid.png` e `apartment-selection-mobile.png`. Artefatos locais ignorados pelo Git.
+- Para os testes de navegador, usar os requisitos/variáveis da seção 44 (`CITYPARK_PLAYWRIGHT_PATH`, `CITYPARK_UI_URL` etc.). Nesta execução, o servidor foi aberto em `http://127.0.0.1:5174/exclusive/`; em outras inicializações, usar a porta informada pelo Vite.
+
+## Continuidade
+
+- Continuar os ajustes da experiência do cliente conforme os próximos wireframes/orientações do Vini. A tela principal de customização permanece com o layout anterior nesta etapa, recebendo apenas os bloqueios necessários do prazo final.
+- Cadastrar área e prazo final reais quando a equipe os fornecer. Criar posteriormente o fluxo administrativo para edição do prazo, com autorização e histórico; a interface administrativa ainda não foi implementada.
+- Os trabalhos anteriores de consolidação de scripts/documentação, calendário, catálogo oficial, orçamento, comunicação e homologação permanecem no roteiro, respeitando a prioridade atual da experiência do cliente.
+
+**Fim do checkpoint — seleção de apartamentos e prazo final implementados e testados localmente.**
+
+---
+
+# 46. Seleção de unidades compartilhada — 20/10/2026
+
+## Implementado e testado
+
+- Por orientação do Vini, o formato da seção 45 passa a ser o padrão para **Cliente, Arquiteta e Admin**. A descrição anterior de que a seleção da equipe manteria o formato antigo foi superada por esta decisão.
+- Os três perfis usam a mesma implementação de cartões: unidade única centralizada, duas colunas no desktop, uma no celular, metadados discretos e prazo final no canto inferior direito. Apenas o botão “Acessar unidade” abre o configurador; o antigo atalho de continuar unidade também foi retirado da seleção da equipe.
+- Para a equipe, o título é “Selecione a unidade para atendimento”, com identificação de Arquiteta ou Administrador acima. O cabeçalho da seleção usa “Voltar ao login”; dentro da unidade, a identificação de atendimento e os controles próprios da equipe permanecem.
+- As permissões existentes foram preservadas: Arquiteta vê somente unidades atribuídas e autorizadas, Admin vê unidades ativas e nenhum deles ganha o envio de proposta reservado ao cliente. O painel administrativo de edição de prazos continua pendente.
+- `npm test`: **17 testes passaram**. `npm run build` concluído. `npm run test:apartments-ui-local` passou para os três perfis, incluindo uma e várias unidades, autorização da Arquiteta, alcance do Admin, cliques fora do botão, entrada/saída, desktop e celular. As verificações anteriores do cliente e do prazo final continuam passando.
+- Capturas conferidas em `outputs/qa/apartment-selection-architect.png` e `apartment-selection-admin-mobile.png`; também foram geradas as versões de celular da Arquiteta e desktop do Admin. O teste cria e remove suas próprias contas e unidades, preservando os registros existentes.
+
+## Continuidade
+
+- Usar esta seleção compartilhada nas próximas evoluções, preservando as permissões e a identidade visual de cada fluxo. Prosseguir com os ajustes de experiência conforme as próximas orientações/wireframes do Vini.
+- As pendências de dados oficiais, painel administrativo, consolidação da documentação e demais entregas das seções 43–45 permanecem no roteiro.
+
+**Fim do checkpoint — padrão de seleção aplicado aos três perfis e validado localmente.**
+
+---
+
+# 47. Ícones oficiais da sidebar — 20/10/2026
+
+- Arquivos enviados pelo Vini movidos de `ícones side bar` para `assets/icons/sidebar`. A pasta de origem foi excluída após ficar vazia; as versões pretas foram preservadas como recursos, sem uso na interface.
+- Sidebar compartilhada pelos três perfis usa os PNGs **brancos** de Planta, Piso, Bancadas, Louças e Metais, associados pelos nomes dos arquivos. Tamanho de 24 × 24 px com proporção preservada. Estados ativo e indisponível e comportamento dos módulos permanecem.
+- Extras mantém o símbolo `+`, pois não foi fornecido um arquivo para esse item. Ícones decorativos não duplicam o nome acessível dos botões.
+- Build concluído com os arquivos incluídos em `dist/assets/icons/sidebar`. Verificação no navegador confirmou os cinco PNGs carregados e navegação Planta/Bancadas; captura em `outputs/qa/sidebar-white-icons.png`. Nenhuma alteração no banco.
+- Continuidade: manter a seleção compartilhada da seção 46 e seguir as próximas orientações de experiência visual do Vini.
+
+---
+
+# 48. Visualização proporcional e sidebar recolhível — 21/10/2026
+
+## Orientação e implementação
+
+- Os dois novos wireframes de baixa fidelidade do Vini orientam as proporções da visualização e o recolhimento da sidebar; a identidade visual do Exclusive foi preservada. O foco desta entrega foi a sidebar e o espaço de visualização, compartilhados por Cliente, Arquiteta e Admin.
+- Controle no canto superior direito do menu permite recolher/expandir. Recolhida, a sidebar tem 80 px, mostra os ícones brancos e mantém os módulos navegáveis, com nomes acessíveis e dicas ao passar o mouse. A ajuda continua acessível pelo símbolo `?`. Expandida, reapresenta textos e indicadores de disponibilidade.
+- Ao entrar em uma unidade, a sidebar começa **expandida**. A preferência permanece ao navegar entre módulos/grupos da mesma unidade; não integra os dados de personalização salvos. Trocar/abrir outra unidade restaura o padrão expandido. O controle funciona pelo teclado e recupera o foco após a atualização da tela.
+- A grade redistribui a largura da área central conforme o estado do menu. A prévia reserva pelo menos 260 px de altura, com painéis de escolhas proporcionais à altura disponível. Em espaços baixos, a página/área central permite rolagem para manter os controles alcançáveis.
+- Corrigida a prévia da Área social: a imagem composta ocupa uma área delimitada, com `object-fit: contain` em todas as camadas e caixas coincidentes. A combinação antiga de altura pela largura, legendas e rolagem interna cortava a perspectiva. Agora a composição inteira cabe no espaço, com margens quando necessário, sem achatamento e sem rolagem dentro da imagem. A cozinha usa o mesmo princípio de enquadramento proporcional.
+- O zoom nativo do navegador é respeitado: o layout se adapta ao espaço disponível. Não há bloqueio de zoom nem escala inversa. Em telas estreitas, o resumo fica abaixo e a sidebar continua disponível, em vez de desaparecer.
+- Não houve mudança de banco, catálogo, preços, permissões ou regras de proposta/prazo nesta entrega.
+
+## Verificação concluída
+
+- `npm test`: **17 testes passaram**. `npm run build` concluído. `git diff --check` sem erros de whitespace.
+- Novo `npm run test:customizer-layout-local`: usa o configurador e CSS reais com dados em memória, sem gravar no banco. Valida expansão/recolhimento, foco/teclado, navegação por ícones, preservação de escolhas, conteúdo do salvamento sem estado da sidebar, ajuda, revisão, módulos indisponíveis e retorno ao padrão ao abrir outra unidade.
+- Imagens e camadas carregadas, proporcionais e inteiras nos dois estados do menu em **1437×678, 1920×1080, 1366×650, 1093×520, 911×433, 683×325 e 390×844**. As dimensões intermediárias simulam o espaço CSS disponível ao aumentar o zoom em uma tela 1366×650; não são uma alteração do zoom nativo via automação. O botão “Continuar para materiais” também foi acionado nessas dimensões. Verificados os três perfis.
+- `npm run test:apartments-ui-local` passou novamente: seleção dos três perfis, permissões, celular, consulta de unidade vencida e bloqueio automático no vencimento.
+- `npm run test:proposal-ui-local` passou: envio 1/4, salvar sem consumir reenvio, rascunho não reenviado impedindo parecer, coproprietário reenviando a mesma proposta em 3/4, bloqueio em 4/4, parecer e novo ciclo 1/4, preservando cinco versões.
+- O teste de propostas inicialmente encontrou credenciais de demonstração diferentes das esperadas. O script foi ajustado para criar e remover **cliente, coproprietário e arquiteta temporários**, eliminando a dependência das senhas de `cliente.d/e`. As credenciais existentes não foram alteradas. As instruções históricas da seção 44 sobre senha de demonstração para esse teste foram superadas por esta atualização; ainda é necessário o catálogo fictício da 1401A como origem da planta.
+- Capturas em `outputs/qa/customizer-expanded.png`, `customizer-collapsed.png`, `customizer-materials.png`, `customizer-125.png` e `customizer-mobile.png`. Para repetir, usar as variáveis de Playwright/URL/canal descritas nas seções anteriores. Servidor desta sessão: `http://127.0.0.1:5174/exclusive/`.
+
+## Próximo passo
+
+- Vini pode conferir visualmente a customização com a sidebar expandida e recolhida. Continuar os ajustes conforme suas próximas orientações/wireframes, mantendo os fluxos e as permissões atuais.
+- Painel administrativo, dados oficiais e demais entregas das seções anteriores continuam pendentes; não foram iniciados nesta mudança visual.
+
+**Fim do checkpoint — visualização proporcional e sidebar recolhível implementadas e validadas localmente.**
+
+### Ajuste complementar da sidebar — 21/10/2026
+
+- Título atualizado para “Personalize seu apartamento”. Controle de recolher/expandir com o desenho anterior de painel e seta, traços arredondados e sem borda externa no botão. Vini corrigiu a remoção da moldura que faz parte do próprio desenho: essa forma foi restaurada. Mantido o alinhamento ao centro do título na sidebar expandida e à coluna dos demais ícones quando recolhida.
+- Build concluído e alinhamentos conferidos no navegador em 1366 px e 390 px, com recolhimento, expansão e navegação preservados. Capturas em `outputs/qa/sidebar-title-expanded.png` e `sidebar-title-collapsed.png`.
+
+---
+
+# 49. Cabeçalho compacto, imagem preenchida e cards de Planta — 21/10/2026
+
+- Removido “Etapa 2”. O cabeçalho da Planta foi compactado; título e prazo ficam alinhados pelo centro horizontalmente, com quebra responsiva quando a largura não comporta ambos.
+- A perspectiva social agora ocupa toda a largura do campo, cuja altura segue a proporção real da imagem (5000:1770). Base e sobreposições continuam coincidentes, inteiras e sem distorção; removidas as margens laterais internas provocadas pela altura fixa anterior. As legendas e avisos de prévia parcial foram preservados.
+- A altura mínima fixa de 260 px da prévia de Planta descrita na seção 48 foi substituída pelo dimensionamento proporcional à largura. Em telas baixas, a área principal pode rolar para acomodar a perspectiva e as opções; a seção dos cards não possui rolagem vertical própria.
+- Removidos “Alterações da Planta”, o rodapé de configuração e o botão “Continuar para materiais”. O título Área social/Suíte Master fica alinhado aos seletores da direita. Bancadas permanece acessível pela sidebar, expandida ou recolhida.
+- Cards de Planta têm **176 px de altura e 220 px de largura inicial**. A largura cresce somente se o conteúdo não couber na altura fixa, medido após renderizar e após carregar as fontes. Textos, tags e preços ficam completos; a fileira permite rolagem horizontal quando necessário. No teste com o conteúdo atual, o último card precisou de 226 px de largura. Os cards de materiais não receberam essa regra nova de dimensionamento.
+- Validados `npm test` (**17 testes**), `npm run build` e `npm run test:customizer-layout-local` nos três perfis e nas sete dimensões da seção 48. O teste foi atualizado para verificar proporção preenchida, ausência de rolagem vertical nas opções, conteúdo completo e remoção dos controles antigos; a navegação para Bancadas usa a sidebar. Salvamento, ajuda, revisão, preservação das escolhas e expansão/recolhimento continuam passando.
+- Conferidos visualmente `outputs/qa/customizer-expanded.png`, `customizer-collapsed.png` e `plant-cards-complete.png`. Nesta execução, o Vite iniciou em `http://127.0.0.1:5176/exclusive/`; usar a porta indicada pelo servidor nas próximas sessões.
+- Nenhuma alteração de banco, permissões ou regras de proposta/prazo. Próximo passo: continuar os ajustes visuais conforme as orientações do Vini; demais pendências anteriores mantidas.
+
+---
+
+# 50. Prévias sem textos e sem faixas vazias — 21/10/2026
+
+- Vini corrigiu o resultado da seção 49: a prévia de Planta deve mostrar somente a imagem. Removidos o título/descrição “Área social · Perspectiva...” e o aviso abaixo da perspectiva. A decisão anterior de preservar esses textos foi superada. As pendências reais dos renders continuam existindo; remover o aviso visual não conclui a renderização da ilha ou de outros elementos faltantes.
+- Removidos os espaçamentos externos, cantos arredondados e molduras das prévias. A imagem encosta nas quatro extremidades do próprio campo, sem faixas de fundo entre a imagem, o cabeçalho e as opções.
+- Cozinha ajustada à proporção nativa de sua base (4000:1894), em vez de um campo de altura fixa que deixava faixas laterais. Planta mantém 5000:1770. Camadas continuam alinhadas e as imagens permanecem completas e proporcionais; não foi usado recorte para preencher. Ferramentas e indicadores sobre a cozinha foram preservados.
+- A Suíte Master ainda não tem imagem recebida e mantém o aviso de preparação. As áreas principais acompanham a altura natural das imagens e podem rolar em telas baixas; os controles e as opções continuam acessíveis.
+- Passaram os 17 testes JavaScript, build e validação de layout nos três perfis/sete dimensões. O teste agora exige coincidência das quatro bordas da imagem com o campo, proporção correta também na cozinha e ausência dos textos na prévia social. Capturas de Planta e cozinha conferidas em `outputs/qa/customizer-expanded.png` e `customizer-materials.png`.
+- Servidor desta execução em `http://127.0.0.1:5177/exclusive/`. Nenhuma alteração de banco ou regras de negócio. Continuidade: seguir as próximas orientações visuais do Vini.
+
+---
+
+# 51. Cards de Planta compactos e independentes — 21/10/2026
+
+- Por nova orientação do Vini, a medida base foi compactada para **220 × 140 px**, substituindo a altura anterior de 176 px. A altura mínima/máxima é fixa; textos não aumentam a altura da fileira nem dos demais cards.
+- Cada card cresce somente em largura quando o conteúdo ultrapassa a área interna. O cálculo parte da medida definida no CSS, evitando outra medida base independente no JavaScript. Altura fixa e rolagem somente horizontal da fileira preservadas.
+- Adicionado teste de uma descrição artificialmente longa em somente um card: confirmou crescimento horizontal desse card, medidas dos outros três inalteradas, todos com 140 px de altura e conteúdo completo; ao retirar o texto adicional, as medidas originais foram recuperadas.
+- Passaram os 17 testes JavaScript, build e teste de layout nos três perfis/sete dimensões. Captura `outputs/qa/customizer-expanded.png` conferida com os cards compactos. Nenhuma alteração nas regras de negócio ou no banco.
+
+---
+
+# 52. Personalização estática, sem rolagem vertical da tela — 21/10/2026
+
+- Vini determinou que a tela de personalização deve ser estática, mantendo o conteúdo acessível. As orientações anteriores de permitir rolagem da página/área principal em telas baixas foram **superadas**.
+- Criado contêiner de 100dvh com linhas para o cabeçalho real e o espaço restante. Removidas a altura mínima de 580 px, a altura fixa de 720 px no celular e a rolagem vertical da área principal. A seleção de apartamentos e o login mantêm seu próprio comportamento de rolagem.
+- O catálogo reserva sua altura e a imagem se ajusta ao espaço restante **nas duas dimensões**, com sua proporção nativa e sem recortes/distorção. Quando as proporções do espaço e da imagem divergem, a imagem pode não ocupar toda a largura; a decisão desta etapa prioriza a tela fixa e a imagem inteira. Não voltar a forçar altura natural pela largura se isso empurrar opções para fora da tela.
+- Cards de Planta mantêm base de 220 × 140 px em altura normal. Em janelas com até 560 px de altura, usam 108 px fixos; o conteúdo longo continua expandindo só o próprio card horizontalmente. Cards de materiais foram dimensionados em 170 px (140 px em janelas baixas), preservando miniatura, texto e preço. A medição individual agora atende ambos os módulos e é atualizada ao redimensionar a tela e ao carregar fontes.
+- Em larguras de até 850 px, o resumo deixa de ocupar uma segunda seção abaixo da tela; fica acessível pelo botão **Resumo** do cabeçalho, que abre a revisão existente com seus controles e regras por perfil. No desktop, o painel direito continua disponível com rolagem interna. Modais conservam rolagem própria para textos longos; opções conservam navegação horizontal.
+- Sidebar e cabeçalho recebem espaçamento compacto em janelas baixas. No celular, os controles do cabeçalho ficam abaixo da marca, sem esconder botões. Navegação por ícones, ajuda e troca de unidade preservadas.
+- Passaram os 17 testes JavaScript, build e `test:customizer-layout-local` nos três perfis e sete dimensões (incluindo 683×325 e 390×844). O teste verifica ausência de overflow vertical em html/body/app/tela/grade/área principal, imagem inteira, preços e botões dentro da altura visível, conteúdo dos cards completo, roda do mouse sem deslocar a área principal e abertura do Resumo compacto.
+- `test:proposal-ui-local` passou novamente: envio inicial, reenvio, coproprietário, bloqueio em 4/4, parecer e novo ciclo com histórico preservado. Contas e unidade temporárias removidas pelo script; credenciais existentes preservadas. Sem mudança de banco ou regras de negócio.
+- Capturas atualizadas em `outputs/qa/customizer-expanded.png`, `customizer-collapsed.png`, `customizer-materials.png`, `customizer-125.png` e `customizer-mobile.png`. Build e `git diff --check` concluídos. Continuidade: conferir os ajustes visuais com Vini e seguir suas próximas orientações.
+
+---
+
+# 53. Imagem acompanha o recolhimento da sidebar — 21/10/2026
+
+- Corrigida a limitação em que a área central aumentava de largura, mas a imagem continuava limitada pela altura restante. Com o menu recolhido, cabeçalho e espaçamentos das opções ficam mais compactos, liberando altura para ampliar a imagem proporcionalmente.
+- Na referência de 1366×650, a perspectiva social cresce mais de 100 px e ocupa a largura disponível após recolher. A cozinha também aumenta de tamanho. Alturas dos cards, conteúdo completo, proporção das imagens e ausência de rolagem vertical da tela foram preservados.
+- O teste de layout agora compara o tamanho real das imagens nos dois estados da sidebar, além da largura da área central. Passou nos três perfis e nas sete dimensões anteriores; build e `git diff --check` concluídos. Captura `outputs/qa/customizer-collapsed.png` conferida.
+- Em espaços muito baixos, o enquadramento continua respeitando a altura disponível para evitar cortes; não substituir por recorte ou distorção. Nenhuma alteração de banco ou fluxo de negócio.
+
+---
+
+# 54. Bancadas com layout compacto e miniaturas visíveis — 21/10/2026
+
+- Aplicado o cabeçalho compacto às opções de Bancadas: removidos o texto “Bancadas · Cozinha/Serviço” e a frase explicativa abaixo do título; título e seletores Configuração/Granito/Rodamão/Serviço ficam alinhados.
+- Identificada a causa das miniaturas quase vazias: os PNGs são camadas da perspectiva completa, com grande área transparente ao redor da peça. Adicionado enquadramento SVG por item, mostrando todos os pixels visíveis e uma margem transparente. Os arquivos originais e seu uso na perspectiva principal não foram modificados.
+- Configuração, Granito, Rodamão e Serviço têm imagens nos dois cards. Rodamão padrão e 60 cm agora usam os renders correspondentes disponíveis, substituindo o símbolo genérico.
+- Cards visuais têm base de 220 × 190 px, com área de imagem de 64 px. A altura é fixa e descrições maiores ampliam apenas a largura individual. Em janelas baixas, mantêm 140 px e miniatura de 36 px, com espaçamentos de texto compactos. A altura dos cards de Planta permanece a da seção 51/52.
+- Passaram os 17 testes JavaScript e build. O teste de layout passou nos três perfis e sete dimensões, agora percorrendo os quatro grupos de Bancadas nos dois estados da sidebar. Também confere que o enquadramento de cada miniatura contém todos os pixels não transparentes da peça, sem ocultar partes, e que o texto dos cards não ultrapassa sua área.
+- Capturas conferidas: `outputs/qa/countertops-counter.png`, `countertops-stone.png`, `countertops-rodamao.png` e `countertops-service.png`. Tela estática, imagens proporcionais, seleção, salvamento, ajuda e revisão preservados. Sem alteração de banco ou regras de negócio.

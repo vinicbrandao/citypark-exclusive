@@ -1,6 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { mountConfigurator, clearConfigurator } from '../app.js';
-import { createLegacyAdapter } from './legacy-adapter.js';
+import { createConfiguratorAdapter } from './configurator-adapter.js';
 import '../styles.css';
 
 const root = document.querySelector('#app');
@@ -149,7 +149,11 @@ async function openSession(session) {
       document.querySelector('#logout').onclick = signOut;
       return;
     }
-    const adapter = await createLegacyAdapter({ client, staffRole: staffResult.data, onSignOut: signOut });
+    const adapter = await createConfiguratorAdapter({
+    client,
+    staffRole: staffResult.data,
+    onSignOut: signOut
+  });
     if (request !== generation) return;
     mountConfigurator(adapter);
   } catch (error) {
