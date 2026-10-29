@@ -13,35 +13,13 @@ SET client_min_messages = warning;
 SET row_security = off;
 
 
+CREATE SCHEMA IF NOT EXISTS "public";
+
+
+ALTER SCHEMA "public" OWNER TO "pg_database_owner";
+
+
 COMMENT ON SCHEMA "public" IS 'standard public schema';
-
-
-
-CREATE EXTENSION IF NOT EXISTS "pg_stat_statements" WITH SCHEMA "extensions";
-
-
-
-
-
-
-CREATE EXTENSION IF NOT EXISTS "pgcrypto" WITH SCHEMA "extensions";
-
-
-
-
-
-
-CREATE EXTENSION IF NOT EXISTS "supabase_vault" WITH SCHEMA "vault";
-
-
-
-
-
-
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA "extensions";
-
-
-
 
 
 SET default_tablespace = '';
@@ -564,6 +542,75 @@ $$;
 ALTER FUNCTION "public"."cancel_architect_assistance"("p_request_id" "uuid") OWNER TO "postgres";
 
 
+CREATE TABLE IF NOT EXISTS "public"."deadline_notifications" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "unit_id" "uuid" NOT NULL,
+    "customer_id" "uuid" NOT NULL,
+    "scope" "text" NOT NULL,
+    "deadline" timestamp with time zone NOT NULL,
+    "due_date" "date" NOT NULL,
+    "days_before" integer NOT NULL,
+    "recipient" "text" NOT NULL,
+    "unit_code" "text" NOT NULL,
+    "module_name" "text",
+    "status" "text" DEFAULT 'pending'::"text" NOT NULL,
+    "attempts" integer DEFAULT 0 NOT NULL,
+    "lease_until" timestamp with time zone,
+    "last_error" "text",
+    "sent_at" timestamp with time zone,
+    "created_at" timestamp with time zone DEFAULT "clock_timestamp"() NOT NULL,
+    CONSTRAINT "deadline_notifications_days_before_check" CHECK (("days_before" = ANY (ARRAY[15, 10, 5, 1]))),
+    CONSTRAINT "deadline_notifications_status_check" CHECK (("status" = ANY (ARRAY['pending'::"text", 'sending'::"text", 'sent'::"text", 'failed'::"text"])))
+);
+
+
+ALTER TABLE "public"."deadline_notifications" OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."claim_deadline_notifications"("p_limit" integer DEFAULT 50) RETURNS SETOF "public"."deadline_notifications"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare v_today date := (clock_timestamp() at time zone 'America/Sao_Paulo')::date;
+begin
+  if p_limit not between 1 and 100 then raise exception 'Invalid batch size'; end if;
+  insert into public.deadline_notifications(unit_id,customer_id,scope,deadline,due_date,days_before,recipient,unit_code,module_name)
+  select u.id,cu.customer_id,d.scope,d.deadline,v_today,
+    (d.deadline at time zone 'America/Sao_Paulo')::date-v_today,au.email,u.code,d.module_name
+  from public.units u
+  join public.customer_units cu on cu.unit_id=u.id and cu.active and cu.ownership_role='owner'
+  join public.customer_users usr on usr.customer_id=cu.customer_id and usr.active
+  join auth.users au on au.id=usr.user_id and au.email is not null
+  cross join lateral (
+    select 'unit'::text as scope,u.customization_closes_at as deadline,null::text as module_name
+    union all
+    select 'module:'||w.module_code,w.closes_at,m.name from public.unit_module_windows w
+      join public.customization_modules m on m.code=w.module_code and m.active
+      where w.unit_id=u.id and w.status='active'
+  ) d
+  where u.active and u.customization_status='pending' and d.deadline is not null
+    and (d.deadline at time zone 'America/Sao_Paulo')::date-v_today in (15,10,5,1)
+  on conflict(unit_id,customer_id,scope,deadline,days_before) do nothing;
+
+  return query with batch as (
+    select n.id from public.deadline_notifications n
+    join public.units u on u.id=n.unit_id and u.active and u.customization_status='pending'
+    join public.customer_units cu on cu.unit_id=u.id and cu.customer_id=n.customer_id and cu.active
+    where n.due_date=v_today and n.attempts<5 and n.status<>'sent'
+      and (n.lease_until is null or n.lease_until<clock_timestamp())
+      and ((n.scope='unit' and u.customization_closes_at=n.deadline) or exists(
+        select 1 from public.unit_module_windows w where w.unit_id=n.unit_id
+          and n.scope='module:'||w.module_code and w.status='active' and w.closes_at=n.deadline))
+    order by n.created_at for update of n skip locked limit p_limit
+  ) update public.deadline_notifications n set status='sending',attempts=n.attempts+1,
+      lease_until=clock_timestamp()+interval '10 minutes'
+    from batch where n.id=batch.id returning n.*;
+end; $$;
+
+
+ALTER FUNCTION "public"."claim_deadline_notifications"("p_limit" integer) OWNER TO "postgres";
+
+
 CREATE OR REPLACE FUNCTION "public"."clear_completed_ui_draft"() RETURNS "trigger"
     LANGUAGE "plpgsql"
     SET "search_path" TO ''
@@ -578,6 +625,20 @@ $$;
 
 
 ALTER FUNCTION "public"."clear_completed_ui_draft"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."current_actor_name"() RETURNS "text"
+    LANGUAGE "sql" STABLE SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+  select coalesce(
+    (select name from public.staff_users where user_id = (select auth.uid()) and active),
+    (select c.name from public.customers c join public.customer_users u on u.customer_id = c.id
+      where u.user_id = (select auth.uid()) and u.active limit 1), 'Usuário');
+$$;
+
+
+ALTER FUNCTION "public"."current_actor_name"() OWNER TO "postgres";
 
 
 CREATE OR REPLACE FUNCTION "public"."current_architect_authorization"("p_unit_id" "uuid", "p_architect_user_id" "uuid") RETURNS boolean
@@ -610,6 +671,51 @@ $$;
 
 
 ALTER FUNCTION "public"."current_staff_role"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."customer_can_access_unit"("p_unit_id" "uuid") RETURNS boolean
+    LANGUAGE "sql" STABLE SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+  select exists (
+    select 1 from public.units u
+    join public.customer_units cu on cu.unit_id = u.id and cu.active and cu.ownership_role = 'owner'
+    join public.customer_users usr on usr.customer_id = cu.customer_id and usr.active
+    where u.id = p_unit_id and u.active and usr.user_id = (select auth.uid())
+  );
+$$;
+
+
+ALTER FUNCTION "public"."customer_can_access_unit"("p_unit_id" "uuid") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."find_customer_auth_user"("p_email" "text") RETURNS "uuid"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+begin
+  if public.current_staff_role() is distinct from 'admin' then
+    raise exception 'Admin required' using errcode = '42501'; end if;
+  return (select id from auth.users where lower(email) = lower(btrim(p_email)) limit 1);
+end; $$;
+
+
+ALTER FUNCTION "public"."find_customer_auth_user"("p_email" "text") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."finish_deadline_notification"("p_id" "uuid", "p_success" boolean, "p_error" "text" DEFAULT NULL::"text") RETURNS "void"
+    LANGUAGE "sql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+  update public.deadline_notifications set status=case when p_success then 'sent' else 'failed' end,
+    sent_at=case when p_success then clock_timestamp() else null end,
+    last_error=case when p_success then null else left(p_error,1000) end,
+    lease_until=case when p_success then null else clock_timestamp()+interval '10 minutes' end
+  where id=p_id and status='sending';
+$$;
+
+
+ALTER FUNCTION "public"."finish_deadline_notification"("p_id" "uuid", "p_success" boolean, "p_error" "text") OWNER TO "postgres";
 
 
 CREATE OR REPLACE FUNCTION "public"."guard_legacy_architect_draft"() RETURNS "trigger"
@@ -685,6 +791,53 @@ $$;
 ALTER FUNCTION "public"."guard_submitted_base_plan_assignment"() OWNER TO "postgres";
 
 
+CREATE OR REPLACE FUNCTION "public"."guard_unit_customization_deadline"() RETURNS "trigger"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  v_unit_id uuid;
+  v_closes_at timestamptz;
+begin
+  if tg_table_name = 'unit_module_history' then
+    v_unit_id := new.unit_id;
+  else
+    select p.unit_id into v_unit_id from public.unit_proposals p
+      where p.id = new.proposal_id;
+  end if;
+  select u.customization_closes_at into v_closes_at
+    from public.units u where u.id = v_unit_id;
+  if v_closes_at is not null and clock_timestamp() >= v_closes_at then
+    raise exception 'Unit customization deadline reached' using errcode = '42501';
+  end if;
+  return new;
+end;
+$$;
+
+
+ALTER FUNCTION "public"."guard_unit_customization_deadline"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."list_customer_unit_cards"() RETURNS TABLE("id" "uuid", "code" "text", "tower" "text", "tower_code" "text", "floor_label" "text", "termination" "text", "typology" "text", "area_m2" numeric, "customization_closes_at" timestamp with time zone, "active" boolean, "customization_status" "text")
+    LANGUAGE "sql" STABLE SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+  select u.id,u.code,u.tower,u.tower_code,u.floor_label,u.termination,u.typology,
+    u.area_m2,u.customization_closes_at,u.active,u.customization_status
+  from public.units u
+  where exists (
+    select 1 from public.customer_units cu
+    join public.customer_users usr on usr.customer_id=cu.customer_id and usr.active
+    where cu.unit_id=u.id and cu.active and cu.ownership_role='owner'
+      and usr.user_id=(select auth.uid())
+  )
+  order by u.code;
+$$;
+
+
+ALTER FUNCTION "public"."list_customer_unit_cards"() OWNER TO "postgres";
+
+
 CREATE OR REPLACE FUNCTION "public"."list_unit_architects"("p_unit_id" "uuid") RETURNS TABLE("user_id" "uuid", "name" "text", "authorized" boolean)
     LANGUAGE "plpgsql" STABLE SECURITY DEFINER
     SET "search_path" TO ''
@@ -715,6 +868,27 @@ $$;
 ALTER FUNCTION "public"."list_unit_architects"("p_unit_id" "uuid") OWNER TO "postgres";
 
 
+CREATE OR REPLACE FUNCTION "public"."manage_unit"("p_unit_id" "uuid", "p_customer_id" "uuid", "p_closes_at" timestamp with time zone, "p_module_deadlines" "jsonb") RETURNS "void"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare v_module text; v_date text;
+begin
+  if public.current_staff_role() is distinct from 'admin'
+    then raise exception 'Admin required' using errcode = '42501'; end if;
+  if jsonb_typeof(p_module_deadlines) is distinct from 'object'
+    then raise exception 'Invalid module deadlines' using errcode = '22023'; end if;
+  perform public.set_unit_customer(p_unit_id, p_customer_id);
+  perform public.set_unit_deadline(p_unit_id, p_closes_at);
+  for v_module, v_date in select key, value from jsonb_each_text(p_module_deadlines) loop
+    perform public.set_module_deadline(p_unit_id, v_module, v_date::timestamptz);
+  end loop;
+end; $$;
+
+
+ALTER FUNCTION "public"."manage_unit"("p_unit_id" "uuid", "p_customer_id" "uuid", "p_closes_at" timestamp with time zone, "p_module_deadlines" "jsonb") OWNER TO "postgres";
+
+
 CREATE OR REPLACE FUNCTION "public"."record_customization_actor"() RETURNS "trigger"
     LANGUAGE "plpgsql"
     SET "search_path" TO ''
@@ -741,6 +915,61 @@ end; $$;
 
 
 ALTER FUNCTION "public"."record_draft_history"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."record_unit_access"("p_unit_id" "uuid") RETURNS "void"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare v_first boolean;
+begin
+  -- Serialize access against activation/link changes and concurrent first opens.
+  perform 1 from public.units where id=p_unit_id for update;
+  if not found or (select auth.uid()) is null or not (
+    coalesce(public.staff_can_access_unit(p_unit_id),false) or public.customer_can_access_unit(p_unit_id)
+  ) then raise exception 'Unit access denied' using errcode='42501'; end if;
+  v_first := not exists(select 1 from public.unit_activity_events
+    where unit_id=p_unit_id and actor_user_id=(select auth.uid())
+      and action in ('unit_opened','unit_first_opened'));
+  insert into public.unit_activity_events(unit_id,actor_user_id,actor_role,action)
+  values(p_unit_id,(select auth.uid()),coalesce(public.current_staff_role(),'customer'),
+    case when v_first then 'unit_first_opened' else 'unit_opened' end);
+end; $$;
+
+
+ALTER FUNCTION "public"."record_unit_access"("p_unit_id" "uuid") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."register_customer_account"("p_name" "text", "p_email" "text") RETURNS "uuid"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $_$
+declare v_user uuid; v_customer uuid; v_email text := lower(btrim(p_email)); v_name text := btrim(p_name);
+begin
+  if public.current_staff_role() is distinct from 'admin' then
+    raise exception 'Admin required' using errcode = '42501'; end if;
+  if v_name is null or length(v_name) not between 1 and 200 or v_email is null
+    or length(v_email) > 254 or v_email !~ '^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$' then
+    raise exception 'Invalid customer profile' using errcode = '22023'; end if;
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(v_email, 0));
+  v_user := public.find_customer_auth_user(v_email);
+  if v_user is null then raise exception 'Auth account not provisioned' using errcode = '22023'; end if;
+  if exists(select 1 from public.staff_users where user_id = v_user) then
+    raise exception 'Staff account cannot be a customer account' using errcode = '22023'; end if;
+  select customer_id into v_customer from public.customer_users where user_id = v_user and active;
+  if v_customer is null then
+    insert into public.customers(name,email) values(v_name,v_email) returning id into v_customer;
+    insert into public.customer_users(customer_id,user_id,active) values(v_customer,v_user,true);
+  else
+    update public.customers set name = v_name, email = v_email where id = v_customer;
+  end if;
+  insert into public.unit_activity_events(actor_user_id,actor_role,action,details)
+  values((select auth.uid()),'admin','customer_registered',jsonb_build_object('customer_id',v_customer));
+  return v_customer;
+end; $_$;
+
+
+ALTER FUNCTION "public"."register_customer_account"("p_name" "text", "p_email" "text") OWNER TO "postgres";
 
 
 CREATE OR REPLACE FUNCTION "public"."request_architect_assistance"("p_customer_id" "uuid", "p_unit_id" "uuid", "p_architect_user_id" "uuid", "p_message" "text" DEFAULT NULL::"text") RETURNS "public"."architect_assistance_requests"
@@ -1666,22 +1895,159 @@ $$;
 ALTER FUNCTION "public"."set_architect_authorization"("p_customer_id" "uuid", "p_unit_id" "uuid", "p_architect_user_id" "uuid", "p_active" boolean) OWNER TO "postgres";
 
 
+CREATE OR REPLACE FUNCTION "public"."set_module_deadline"("p_unit_id" "uuid", "p_module_code" "text", "p_closes_at" timestamp with time zone) RETURNS "void"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare v_previous timestamptz;
+begin
+  if public.current_staff_role() is distinct from 'admin'
+    then raise exception 'Admin required' using errcode = '42501'; end if;
+  perform 1 from public.units where id = p_unit_id for update;
+  if not found or not exists (select 1 from public.customization_modules where code = p_module_code and active)
+    then raise exception 'Unit or module not found' using errcode = '22023'; end if;
+  select closes_at into v_previous from public.unit_module_windows
+    where unit_id = p_unit_id and module_code = p_module_code;
+  if p_closes_at is null then
+    delete from public.unit_module_windows where unit_id = p_unit_id and module_code = p_module_code;
+  else
+    insert into public.unit_module_windows(unit_id, module_code, opens_at, closes_at, status)
+    values(p_unit_id, p_module_code, least(clock_timestamp(), p_closes_at) - interval '1 second', p_closes_at, 'active')
+    on conflict (unit_id, module_code) do update set opens_at = excluded.opens_at,
+      closes_at = excluded.closes_at, status = 'active', updated_at = clock_timestamp();
+  end if;
+  if v_previous is distinct from p_closes_at then
+    insert into public.unit_activity_events(unit_id, actor_user_id, actor_role, action, details)
+    values(p_unit_id, (select auth.uid()), 'admin', 'module_deadline_changed',
+      jsonb_build_object('module_code', p_module_code, 'previous', v_previous, 'closes_at', p_closes_at));
+  end if;
+end; $$;
+
+
+ALTER FUNCTION "public"."set_module_deadline"("p_unit_id" "uuid", "p_module_code" "text", "p_closes_at" timestamp with time zone) OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."units" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "code" "text" NOT NULL,
+    "tower" "text" NOT NULL,
+    "floor_label" "text" NOT NULL,
+    "termination" "text" NOT NULL,
+    "typology" "text" NOT NULL,
+    "active" boolean DEFAULT true NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "floor_number" integer,
+    "external_ref" "text",
+    "tower_code" "text",
+    "termination_code" "text",
+    "area_m2" numeric(8,2),
+    "customization_closes_at" timestamp with time zone,
+    "customization_status" "text" DEFAULT 'pending'::"text" NOT NULL,
+    CONSTRAINT "units_area_m2_positive" CHECK ((("area_m2" IS NULL) OR ("area_m2" > (0)::numeric))),
+    CONSTRAINT "units_completed_is_inactive" CHECK ((("customization_status" <> 'completed'::"text") OR (NOT "active"))),
+    CONSTRAINT "units_customization_status_check" CHECK (("customization_status" = ANY (ARRAY['pending'::"text", 'completed'::"text"]))),
+    CONSTRAINT "units_floor_number_valid" CHECK ((("floor_number" IS NULL) OR ("floor_number" >= 0))),
+    CONSTRAINT "units_termination_code_valid" CHECK ((("termination_code" IS NULL) OR ("termination_code" ~ '^[0-9]{2}$'::"text"))),
+    CONSTRAINT "units_tower_code_valid" CHECK ((("tower_code" IS NULL) OR ("tower_code" = ANY (ARRAY['A'::"text", 'B'::"text"]))))
+);
+
+
+ALTER TABLE "public"."units" OWNER TO "postgres";
+
+
+COMMENT ON COLUMN "public"."units"."area_m2" IS 'Apartment area in m², supplied by the team.';
+
+
+
+COMMENT ON COLUMN "public"."units"."customization_closes_at" IS 'Exclusive final cutoff for all unit choices and proposal submissions. Module windows may close earlier.';
+
+
+
+CREATE OR REPLACE FUNCTION "public"."set_unit_active"("p_unit_id" "uuid", "p_active" boolean) RETURNS "public"."units"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare v_unit public.units;
+begin
+  if (select public.current_staff_role()) not in ('architect','admin') or public.current_staff_role() is null
+    then raise exception 'Staff access required' using errcode = '42501'; end if;
+  if p_active is null then raise exception 'Invalid unit status' using errcode = '22023'; end if;
+  select * into v_unit from public.units where id = p_unit_id for update;
+  if not found then raise exception 'Unit not found' using errcode = '22023'; end if;
+  if p_active and v_unit.customization_status = 'completed' and public.current_staff_role() <> 'admin'
+    then raise exception 'Only admin can reopen completed unit' using errcode = '42501'; end if;
+  if v_unit.active is distinct from p_active then
+    update public.units set active = p_active,
+      customization_status = case when p_active then 'pending' else customization_status end
+      where id = p_unit_id returning * into v_unit;
+    insert into public.unit_activity_events(unit_id, actor_user_id, actor_role, action, details)
+    values(p_unit_id, (select auth.uid()), public.current_staff_role(), 'unit_status_changed',
+      jsonb_build_object('active', p_active, 'customization_status', v_unit.customization_status));
+  end if;
+  return v_unit;
+end; $$;
+
+
+ALTER FUNCTION "public"."set_unit_active"("p_unit_id" "uuid", "p_active" boolean) OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."set_unit_customer"("p_unit_id" "uuid", "p_customer_id" "uuid") RETURNS "void"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare v_previous uuid;
+begin
+  if public.current_staff_role() is distinct from 'admin'
+    then raise exception 'Admin required' using errcode = '42501'; end if;
+  perform 1 from public.units where id = p_unit_id for update;
+  if not found or (p_customer_id is not null and not exists (select 1 from public.customers where id = p_customer_id))
+    then raise exception 'Unit or customer not found' using errcode = '22023'; end if;
+  select customer_id into v_previous from public.customer_units where unit_id = p_unit_id and active;
+  update public.customer_units set active = false where unit_id = p_unit_id and active;
+  if p_customer_id is not null then
+    insert into public.customer_units(customer_id, unit_id, ownership_role, active)
+    values(p_customer_id, p_unit_id, 'owner', true) on conflict(customer_id, unit_id)
+    do update set ownership_role = 'owner', active = true;
+  end if;
+  if v_previous is distinct from p_customer_id then
+    insert into public.unit_activity_events(unit_id, actor_user_id, actor_role, action, details)
+    values(p_unit_id, (select auth.uid()), 'admin', 'unit_customer_changed',
+      jsonb_build_object('previous_customer_id', v_previous, 'customer_id', p_customer_id));
+  end if;
+end; $$;
+
+
+ALTER FUNCTION "public"."set_unit_customer"("p_unit_id" "uuid", "p_customer_id" "uuid") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."set_unit_deadline"("p_unit_id" "uuid", "p_closes_at" timestamp with time zone) RETURNS "void"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare v_previous timestamptz;
+begin
+  if public.current_staff_role() is distinct from 'admin'
+    then raise exception 'Admin required' using errcode = '42501'; end if;
+  select customization_closes_at into v_previous from public.units where id = p_unit_id for update;
+  if not found then raise exception 'Unit not found' using errcode = '22023'; end if;
+  update public.units set customization_closes_at = p_closes_at where id = p_unit_id;
+  if v_previous is distinct from p_closes_at then
+    insert into public.unit_activity_events(unit_id, actor_user_id, actor_role, action, details)
+    values(p_unit_id, (select auth.uid()), 'admin', 'unit_deadline_changed',
+      jsonb_build_object('previous', v_previous, 'closes_at', p_closes_at));
+  end if;
+end; $$;
+
+
+ALTER FUNCTION "public"."set_unit_deadline"("p_unit_id" "uuid", "p_closes_at" timestamp with time zone) OWNER TO "postgres";
+
+
 CREATE OR REPLACE FUNCTION "public"."staff_can_access_unit"("p_unit_id" "uuid") RETURNS boolean
     LANGUAGE "sql" STABLE SECURITY DEFINER
     SET "search_path" TO ''
     AS $$
-  select exists (
-    select 1 from public.staff_users s
-    join public.units u on u.id = p_unit_id and u.active
-    where s.user_id = (select auth.uid()) and s.active
-      and (s.role = 'admin' or (
-        s.role = 'architect' and exists (
-          select 1 from public.staff_unit_assignments a
-          where a.user_id = s.user_id and a.unit_id = p_unit_id and a.active
-            and public.current_architect_authorization(p_unit_id, s.user_id)
-        )
-      ))
-  );
+  select exists (select 1 from public.units where id = p_unit_id)
+    and public.current_staff_role() in ('architect', 'admin');
 $$;
 
 
@@ -1915,6 +2281,62 @@ $$;
 ALTER FUNCTION "public"."unit_module_revision_snapshot"("p_unit_id" "uuid") OWNER TO "postgres";
 
 
+CREATE OR REPLACE FUNCTION "public"."validate_unit_session"("p_unit_id" "uuid", "p_selections" "jsonb") RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $_$
+declare v_plan uuid; v_choices jsonb; v_count integer;
+begin
+  if (select auth.uid()) is null or not (coalesce(public.staff_can_access_unit(p_unit_id), false)
+    or public.customer_can_access_unit(p_unit_id))
+    then raise exception 'Unit access denied' using errcode = '42501'; end if;
+  if jsonb_typeof(p_selections) is distinct from 'object'
+    then raise exception 'Invalid session choices' using errcode = '22023'; end if;
+  select a.base_plan_id into v_plan from public.unit_base_plan_assignments a
+    join public.base_plans p on p.id = a.base_plan_id and p.status = 'active' where a.unit_id = p_unit_id;
+  if v_plan is null then raise exception 'Base plan not assigned' using errcode = '22023'; end if;
+  select coalesce(jsonb_object_agg(group_id::text, option_id::text), '{}'::jsonb) into v_choices
+    from public.base_plan_option_defaults where base_plan_id = v_plan;
+  v_choices := v_choices || p_selections;
+  if exists (select 1 from jsonb_each(v_choices) e where jsonb_typeof(e.value) <> 'string'
+    or e.key !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+    or (e.value #>> '{}') !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+    then raise exception 'Invalid session option' using errcode = '22023'; end if;
+  select count(*) into v_count from jsonb_each_text(v_choices) e
+    join public.customization_options o on o.id = e.value::uuid and o.group_id = e.key::uuid and o.status = 'active'
+    join public.customization_groups g on g.id = o.group_id and g.status = 'active'
+    join public.customization_modules m on m.code = g.module_code and m.active
+    join public.base_plan_option_availability a on a.option_id = o.id and a.base_plan_id = v_plan;
+  if v_count <> (select count(*) from jsonb_each(v_choices)) then
+    raise exception 'Option unavailable for base plan' using errcode = '22023'; end if;
+  if exists (select 1 from public.customization_groups g
+    join public.customization_modules m on m.code = g.module_code and m.active
+    where g.status = 'active' and g.required_for_submission
+      and exists (select 1 from public.customization_options o join public.base_plan_option_availability a
+        on a.option_id = o.id and a.base_plan_id = v_plan where o.group_id = g.id and o.status = 'active')
+      and not (v_choices ? g.id::text)) then
+    raise exception 'Required choices are incomplete' using errcode = '22023'; end if;
+  if exists (select 1 from public.base_plan_option_exclusions e where e.base_plan_id = v_plan
+    and exists (select 1 from jsonb_each_text(v_choices) c where c.value::uuid = e.first_option_id)
+    and exists (select 1 from jsonb_each_text(v_choices) c where c.value::uuid = e.second_option_id))
+    or exists (select 1 from public.base_plan_option_requirements r where r.base_plan_id = v_plan
+      and exists (select 1 from jsonb_each_text(v_choices) c where c.value::uuid = r.option_id)
+      and not exists (select 1 from jsonb_each_text(v_choices) c where c.value::uuid = r.required_option_id))
+    then raise exception 'Incompatible session choices' using errcode = '22023'; end if;
+  if exists (select 1 from public.units where id = p_unit_id
+    and customization_closes_at is not null and clock_timestamp() >= customization_closes_at)
+    or exists (select 1 from public.unit_module_windows w
+      join public.customization_groups g on g.module_code = w.module_code
+      where w.unit_id = p_unit_id and v_choices ? g.id::text
+        and (w.status <> 'active' or clock_timestamp() < w.opens_at or clock_timestamp() >= w.closes_at))
+    then raise exception 'Customization deadline closed' using errcode = '42501'; end if;
+  return v_choices;
+end; $_$;
+
+
+ALTER FUNCTION "public"."validate_unit_session"("p_unit_id" "uuid", "p_selections" "jsonb") OWNER TO "postgres";
+
+
 CREATE TABLE IF NOT EXISTS "public"."architect_assistance_events" (
     "id" bigint NOT NULL,
     "request_id" "uuid" NOT NULL,
@@ -1976,6 +2398,16 @@ CREATE TABLE IF NOT EXISTS "public"."base_plan_option_availability" (
 ALTER TABLE "public"."base_plan_option_availability" OWNER TO "postgres";
 
 
+CREATE TABLE IF NOT EXISTS "public"."base_plan_option_defaults" (
+    "base_plan_id" "uuid" NOT NULL,
+    "group_id" "uuid" NOT NULL,
+    "option_id" "uuid" NOT NULL
+);
+
+
+ALTER TABLE "public"."base_plan_option_defaults" OWNER TO "postgres";
+
+
 CREATE TABLE IF NOT EXISTS "public"."base_plan_option_exclusions" (
     "base_plan_id" "uuid" NOT NULL,
     "first_option_id" "uuid" NOT NULL,
@@ -1985,6 +2417,17 @@ CREATE TABLE IF NOT EXISTS "public"."base_plan_option_exclusions" (
 
 
 ALTER TABLE "public"."base_plan_option_exclusions" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."base_plan_option_requirements" (
+    "base_plan_id" "uuid" NOT NULL,
+    "option_id" "uuid" NOT NULL,
+    "required_option_id" "uuid" NOT NULL,
+    CONSTRAINT "base_plan_option_requirements_check" CHECK (("option_id" <> "required_option_id"))
+);
+
+
+ALTER TABLE "public"."base_plan_option_requirements" OWNER TO "postgres";
 
 
 CREATE TABLE IF NOT EXISTS "public"."base_plans" (
@@ -2029,6 +2472,7 @@ CREATE TABLE IF NOT EXISTS "public"."customer_units" (
     "purchase_date" "date",
     "external_ref" "text",
     "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "customer_units_active_owner_only" CHECK (((NOT "active") OR ("ownership_role" = 'owner'::"text"))),
     CONSTRAINT "customer_units_ownership_role_valid" CHECK (("ownership_role" = ANY (ARRAY['owner'::"text", 'co_owner'::"text"])))
 );
 
@@ -2271,6 +2715,33 @@ CREATE TABLE IF NOT EXISTS "public"."staff_users" (
 ALTER TABLE "public"."staff_users" OWNER TO "postgres";
 
 
+CREATE TABLE IF NOT EXISTS "public"."unit_activity_events" (
+    "id" bigint NOT NULL,
+    "unit_id" "uuid",
+    "actor_user_id" "uuid" NOT NULL,
+    "actor_role" "text" NOT NULL,
+    "actor_name" "text" DEFAULT "public"."current_actor_name"() NOT NULL,
+    "action" "text" NOT NULL,
+    "details" "jsonb" DEFAULT '{}'::"jsonb" NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "clock_timestamp"() NOT NULL,
+    CONSTRAINT "unit_activity_events_actor_role_check" CHECK (("actor_role" = ANY (ARRAY['customer'::"text", 'architect'::"text", 'admin'::"text"])))
+);
+
+
+ALTER TABLE "public"."unit_activity_events" OWNER TO "postgres";
+
+
+ALTER TABLE "public"."unit_activity_events" ALTER COLUMN "id" ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME "public"."unit_activity_events_id_seq"
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+
 CREATE TABLE IF NOT EXISTS "public"."unit_base_plan_assignments" (
     "unit_id" "uuid" NOT NULL,
     "base_plan_id" "uuid" NOT NULL,
@@ -2370,28 +2841,6 @@ CREATE TABLE IF NOT EXISTS "public"."unit_proposal_versions" (
 ALTER TABLE "public"."unit_proposal_versions" OWNER TO "postgres";
 
 
-CREATE TABLE IF NOT EXISTS "public"."units" (
-    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
-    "code" "text" NOT NULL,
-    "tower" "text" NOT NULL,
-    "floor_label" "text" NOT NULL,
-    "termination" "text" NOT NULL,
-    "typology" "text" NOT NULL,
-    "active" boolean DEFAULT true NOT NULL,
-    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
-    "floor_number" integer,
-    "external_ref" "text",
-    "tower_code" "text",
-    "termination_code" "text",
-    CONSTRAINT "units_floor_number_valid" CHECK ((("floor_number" IS NULL) OR ("floor_number" >= 0))),
-    CONSTRAINT "units_termination_code_valid" CHECK ((("termination_code" IS NULL) OR ("termination_code" ~ '^[0-9]{2}$'::"text"))),
-    CONSTRAINT "units_tower_code_valid" CHECK ((("tower_code" IS NULL) OR ("tower_code" = ANY (ARRAY['A'::"text", 'B'::"text"]))))
-);
-
-
-ALTER TABLE "public"."units" OWNER TO "postgres";
-
-
 ALTER TABLE ONLY "public"."architect_assistance_events"
     ADD CONSTRAINT "architect_assistance_events_pkey" PRIMARY KEY ("id");
 
@@ -2417,8 +2866,18 @@ ALTER TABLE ONLY "public"."base_plan_option_availability"
 
 
 
+ALTER TABLE ONLY "public"."base_plan_option_defaults"
+    ADD CONSTRAINT "base_plan_option_defaults_pkey" PRIMARY KEY ("base_plan_id", "group_id");
+
+
+
 ALTER TABLE ONLY "public"."base_plan_option_exclusions"
     ADD CONSTRAINT "base_plan_option_exclusions_pkey" PRIMARY KEY ("base_plan_id", "first_option_id", "second_option_id");
+
+
+
+ALTER TABLE ONLY "public"."base_plan_option_requirements"
+    ADD CONSTRAINT "base_plan_option_requirements_pkey" PRIMARY KEY ("base_plan_id", "option_id", "required_option_id");
 
 
 
@@ -2497,6 +2956,16 @@ ALTER TABLE ONLY "public"."customization_windows"
 
 
 
+ALTER TABLE ONLY "public"."deadline_notifications"
+    ADD CONSTRAINT "deadline_notifications_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."deadline_notifications"
+    ADD CONSTRAINT "deadline_notifications_unit_id_customer_id_scope_deadline_d_key" UNIQUE ("unit_id", "customer_id", "scope", "deadline", "days_before");
+
+
+
 ALTER TABLE ONLY "public"."draft_history"
     ADD CONSTRAINT "draft_history_pkey" PRIMARY KEY ("id");
 
@@ -2544,6 +3013,11 @@ ALTER TABLE ONLY "public"."staff_unit_assignments"
 
 ALTER TABLE ONLY "public"."staff_users"
     ADD CONSTRAINT "staff_users_pkey" PRIMARY KEY ("user_id");
+
+
+
+ALTER TABLE ONLY "public"."unit_activity_events"
+    ADD CONSTRAINT "unit_activity_events_pkey" PRIMARY KEY ("id");
 
 
 
@@ -2653,7 +3127,19 @@ CREATE UNIQUE INDEX "customer_units_external_ref_unique" ON "public"."customer_u
 
 
 
+CREATE UNIQUE INDEX "customer_units_one_active_customer" ON "public"."customer_units" USING "btree" ("unit_id") WHERE "active";
+
+
+
 CREATE INDEX "customer_units_unit_idx" ON "public"."customer_units" USING "btree" ("unit_id");
+
+
+
+CREATE UNIQUE INDEX "customer_users_one_active_account" ON "public"."customer_users" USING "btree" ("customer_id") WHERE "active";
+
+
+
+CREATE UNIQUE INDEX "customer_users_one_active_customer" ON "public"."customer_users" USING "btree" ("user_id") WHERE "active";
 
 
 
@@ -2706,6 +3192,10 @@ CREATE INDEX "option_compatibilities_option_idx" ON "public"."option_compatibili
 
 
 CREATE INDEX "staff_unit_assignments_unit_idx" ON "public"."staff_unit_assignments" USING "btree" ("unit_id", "user_id") WHERE "active";
+
+
+
+CREATE INDEX "unit_activity_events_unit_time" ON "public"."unit_activity_events" USING "btree" ("unit_id", "created_at" DESC, "id" DESC);
 
 
 
@@ -2766,6 +3256,14 @@ CREATE OR REPLACE TRIGGER "guard_open_proposal_edit_limit" BEFORE INSERT ON "pub
 
 
 CREATE OR REPLACE TRIGGER "guard_submitted_base_plan_assignment" BEFORE DELETE OR UPDATE ON "public"."unit_base_plan_assignments" FOR EACH ROW EXECUTE FUNCTION "public"."guard_submitted_base_plan_assignment"();
+
+
+
+CREATE OR REPLACE TRIGGER "guard_unit_final_deadline_on_choices" BEFORE INSERT ON "public"."unit_module_history" FOR EACH ROW EXECUTE FUNCTION "public"."guard_unit_customization_deadline"();
+
+
+
+CREATE OR REPLACE TRIGGER "guard_unit_final_deadline_on_submission" BEFORE INSERT ON "public"."unit_proposal_versions" FOR EACH ROW EXECUTE FUNCTION "public"."guard_unit_customization_deadline"();
 
 
 
@@ -2858,6 +3356,16 @@ ALTER TABLE ONLY "public"."base_plan_option_availability"
 
 
 
+ALTER TABLE ONLY "public"."base_plan_option_defaults"
+    ADD CONSTRAINT "base_plan_option_defaults_base_plan_id_option_id_fkey" FOREIGN KEY ("base_plan_id", "option_id") REFERENCES "public"."base_plan_option_availability"("base_plan_id", "option_id");
+
+
+
+ALTER TABLE ONLY "public"."base_plan_option_defaults"
+    ADD CONSTRAINT "base_plan_option_defaults_group_id_option_id_fkey" FOREIGN KEY ("group_id", "option_id") REFERENCES "public"."customization_options"("group_id", "id");
+
+
+
 ALTER TABLE ONLY "public"."base_plan_option_exclusions"
     ADD CONSTRAINT "base_plan_option_exclusions_base_plan_id_first_option_id_fkey" FOREIGN KEY ("base_plan_id", "first_option_id") REFERENCES "public"."base_plan_option_availability"("base_plan_id", "option_id");
 
@@ -2870,6 +3378,16 @@ ALTER TABLE ONLY "public"."base_plan_option_exclusions"
 
 ALTER TABLE ONLY "public"."base_plan_option_exclusions"
     ADD CONSTRAINT "base_plan_option_exclusions_base_plan_id_second_option_id_fkey" FOREIGN KEY ("base_plan_id", "second_option_id") REFERENCES "public"."base_plan_option_availability"("base_plan_id", "option_id");
+
+
+
+ALTER TABLE ONLY "public"."base_plan_option_requirements"
+    ADD CONSTRAINT "base_plan_option_requirements_base_plan_id_option_id_fkey" FOREIGN KEY ("base_plan_id", "option_id") REFERENCES "public"."base_plan_option_availability"("base_plan_id", "option_id");
+
+
+
+ALTER TABLE ONLY "public"."base_plan_option_requirements"
+    ADD CONSTRAINT "base_plan_option_requirements_base_plan_id_required_option_fkey" FOREIGN KEY ("base_plan_id", "required_option_id") REFERENCES "public"."base_plan_option_availability"("base_plan_id", "option_id");
 
 
 
@@ -2968,6 +3486,16 @@ ALTER TABLE ONLY "public"."customization_windows"
 
 
 
+ALTER TABLE ONLY "public"."deadline_notifications"
+    ADD CONSTRAINT "deadline_notifications_customer_id_fkey" FOREIGN KEY ("customer_id") REFERENCES "public"."customers"("id");
+
+
+
+ALTER TABLE ONLY "public"."deadline_notifications"
+    ADD CONSTRAINT "deadline_notifications_unit_id_fkey" FOREIGN KEY ("unit_id") REFERENCES "public"."units"("id");
+
+
+
 ALTER TABLE ONLY "public"."draft_history"
     ADD CONSTRAINT "draft_history_actor_id_fkey" FOREIGN KEY ("actor_id") REFERENCES "auth"."users"("id");
 
@@ -3010,6 +3538,16 @@ ALTER TABLE ONLY "public"."staff_unit_assignments"
 
 ALTER TABLE ONLY "public"."staff_users"
     ADD CONSTRAINT "staff_users_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."unit_activity_events"
+    ADD CONSTRAINT "unit_activity_events_actor_user_id_fkey" FOREIGN KEY ("actor_user_id") REFERENCES "auth"."users"("id");
+
+
+
+ALTER TABLE ONLY "public"."unit_activity_events"
+    ADD CONSTRAINT "unit_activity_events_unit_id_fkey" FOREIGN KEY ("unit_id") REFERENCES "public"."units"("id");
 
 
 
@@ -3173,6 +3711,14 @@ ALTER TABLE ONLY "public"."unit_proposals"
 
 
 
+CREATE POLICY "admin_customer_accounts" ON "public"."customer_users" FOR SELECT TO "authenticated" USING ((( SELECT "public"."current_staff_role"() AS "current_staff_role") = 'admin'::"text"));
+
+
+
+CREATE POLICY "admin_deadline_notifications" ON "public"."deadline_notifications" FOR SELECT TO "authenticated" USING ((( SELECT "public"."current_staff_role"() AS "current_staff_role") = 'admin'::"text"));
+
+
+
 ALTER TABLE "public"."architect_assistance_events" ENABLE ROW LEVEL SECURITY;
 
 
@@ -3188,7 +3734,13 @@ ALTER TABLE "public"."architect_authorizations" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "public"."base_plan_option_availability" ENABLE ROW LEVEL SECURITY;
 
 
+ALTER TABLE "public"."base_plan_option_defaults" ENABLE ROW LEVEL SECURITY;
+
+
 ALTER TABLE "public"."base_plan_option_exclusions" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."base_plan_option_requirements" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "public"."base_plans" ENABLE ROW LEVEL SECURITY;
@@ -3224,6 +3776,9 @@ ALTER TABLE "public"."customization_options" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "public"."customization_windows" ENABLE ROW LEVEL SECURITY;
 
 
+ALTER TABLE "public"."deadline_notifications" ENABLE ROW LEVEL SECURITY;
+
+
 ALTER TABLE "public"."draft_history" ENABLE ROW LEVEL SECURITY;
 
 
@@ -3256,15 +3811,13 @@ CREATE POLICY "own_staff_role" ON "public"."staff_users" FOR SELECT TO "authenti
 
 
 
-CREATE POLICY "own_unit_links" ON "public"."customer_units" FOR SELECT TO "authenticated" USING (("active" AND (EXISTS ( SELECT 1
-   FROM "public"."customer_users" "cu"
-  WHERE ("cu"."customer_id" = "customer_units"."customer_id")))));
+CREATE POLICY "own_unit_links" ON "public"."customer_units" FOR SELECT TO "authenticated" USING (("active" AND ("ownership_role" = 'owner'::"text") AND (EXISTS ( SELECT 1
+   FROM "public"."customer_users" "usr"
+  WHERE (("usr"."customer_id" = "customer_units"."customer_id") AND "usr"."active" AND ("usr"."user_id" = ( SELECT "auth"."uid"() AS "uid")))))));
 
 
 
-CREATE POLICY "own_units" ON "public"."units" FOR SELECT TO "authenticated" USING (("active" AND (EXISTS ( SELECT 1
-   FROM "public"."customer_units" "cu"
-  WHERE ("cu"."unit_id" = "units"."id")))));
+CREATE POLICY "own_units" ON "public"."units" FOR SELECT TO "authenticated" USING ("public"."customer_can_access_unit"("id"));
 
 
 
@@ -3379,9 +3932,19 @@ CREATE POLICY "readable_groups" ON "public"."customization_groups" FOR SELECT TO
 
 
 
-CREATE POLICY "readable_modules" ON "public"."customization_modules" FOR SELECT TO "authenticated" USING (("active" AND (EXISTS ( SELECT 1
-   FROM "public"."unit_module_windows" "w"
-  WHERE ("w"."module_code" = "customization_modules"."code")))));
+CREATE POLICY "readable_modules" ON "public"."customization_modules" FOR SELECT TO "authenticated" USING ("active");
+
+
+
+CREATE POLICY "readable_option_defaults" ON "public"."base_plan_option_defaults" FOR SELECT TO "authenticated" USING ((EXISTS ( SELECT 1
+   FROM "public"."base_plans" "p"
+  WHERE ("p"."id" = "base_plan_option_defaults"."base_plan_id"))));
+
+
+
+CREATE POLICY "readable_option_requirements" ON "public"."base_plan_option_requirements" FOR SELECT TO "authenticated" USING ((EXISTS ( SELECT 1
+   FROM "public"."base_plans" "p"
+  WHERE ("p"."id" = "base_plan_option_requirements"."base_plan_id"))));
 
 
 
@@ -3461,6 +4024,18 @@ CREATE POLICY "readable_windows" ON "public"."customization_windows" FOR SELECT 
 
 
 
+CREATE POLICY "staff_activity_events" ON "public"."unit_activity_events" FOR SELECT TO "authenticated" USING ((( SELECT "public"."current_staff_role"() AS "current_staff_role") = ANY (ARRAY['architect'::"text", 'admin'::"text"])));
+
+
+
+CREATE POLICY "staff_customer_links" ON "public"."customer_units" FOR SELECT TO "authenticated" USING ((( SELECT "public"."current_staff_role"() AS "current_staff_role") = ANY (ARRAY['architect'::"text", 'admin'::"text"])));
+
+
+
+CREATE POLICY "staff_customers" ON "public"."customers" FOR SELECT TO "authenticated" USING ((( SELECT "public"."current_staff_role"() AS "current_staff_role") = ANY (ARRAY['architect'::"text", 'admin'::"text"])));
+
+
+
 CREATE POLICY "staff_drafts" ON "public"."unit_drafts" FOR SELECT TO "authenticated" USING ("public"."staff_can_access_unit"("unit_id"));
 
 
@@ -3472,11 +4047,14 @@ CREATE POLICY "staff_history" ON "public"."draft_history" FOR SELECT TO "authent
 ALTER TABLE "public"."staff_unit_assignments" ENABLE ROW LEVEL SECURITY;
 
 
-CREATE POLICY "staff_units" ON "public"."units" FOR SELECT TO "authenticated" USING (("active" AND "public"."staff_can_access_unit"("id")));
+CREATE POLICY "staff_units" ON "public"."units" FOR SELECT TO "authenticated" USING ("public"."staff_can_access_unit"("id"));
 
 
 
 ALTER TABLE "public"."staff_users" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."unit_activity_events" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "public"."unit_base_plan_assignments" ENABLE ROW LEVEL SECURITY;
@@ -3515,162 +4093,10 @@ ALTER TABLE "public"."unit_proposals" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "public"."units" ENABLE ROW LEVEL SECURITY;
 
 
-
-
-ALTER PUBLICATION "supabase_realtime" OWNER TO "postgres";
-
-
 GRANT USAGE ON SCHEMA "public" TO "postgres";
 GRANT USAGE ON SCHEMA "public" TO "anon";
 GRANT USAGE ON SCHEMA "public" TO "authenticated";
 GRANT USAGE ON SCHEMA "public" TO "service_role";
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -3680,7 +4106,6 @@ GRANT SELECT ON TABLE "public"."architect_assistance_requests" TO "authenticated
 
 
 REVOKE ALL ON FUNCTION "public"."accept_architect_assistance"("p_request_id" "uuid") FROM PUBLIC;
-GRANT ALL ON FUNCTION "public"."accept_architect_assistance"("p_request_id" "uuid") TO "authenticated";
 GRANT ALL ON FUNCTION "public"."accept_architect_assistance"("p_request_id" "uuid") TO "service_role";
 
 
@@ -3700,13 +4125,27 @@ GRANT ALL ON FUNCTION "public"."approve_import_batch"("p_batch_id" "uuid") TO "s
 
 
 REVOKE ALL ON FUNCTION "public"."cancel_architect_assistance"("p_request_id" "uuid") FROM PUBLIC;
-GRANT ALL ON FUNCTION "public"."cancel_architect_assistance"("p_request_id" "uuid") TO "authenticated";
 GRANT ALL ON FUNCTION "public"."cancel_architect_assistance"("p_request_id" "uuid") TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."deadline_notifications" TO "service_role";
+GRANT SELECT ON TABLE "public"."deadline_notifications" TO "authenticated";
+
+
+
+REVOKE ALL ON FUNCTION "public"."claim_deadline_notifications"("p_limit" integer) FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."claim_deadline_notifications"("p_limit" integer) TO "service_role";
 
 
 
 REVOKE ALL ON FUNCTION "public"."clear_completed_ui_draft"() FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."clear_completed_ui_draft"() TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."current_actor_name"() FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."current_actor_name"() TO "service_role";
 
 
 
@@ -3718,6 +4157,23 @@ GRANT ALL ON FUNCTION "public"."current_architect_authorization"("p_unit_id" "uu
 REVOKE ALL ON FUNCTION "public"."current_staff_role"() FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."current_staff_role"() TO "authenticated";
 GRANT ALL ON FUNCTION "public"."current_staff_role"() TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."customer_can_access_unit"("p_unit_id" "uuid") FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."customer_can_access_unit"("p_unit_id" "uuid") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."customer_can_access_unit"("p_unit_id" "uuid") TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."find_customer_auth_user"("p_email" "text") FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."find_customer_auth_user"("p_email" "text") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."find_customer_auth_user"("p_email" "text") TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."finish_deadline_notification"("p_id" "uuid", "p_success" boolean, "p_error" "text") FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."finish_deadline_notification"("p_id" "uuid", "p_success" boolean, "p_error" "text") TO "service_role";
 
 
 
@@ -3736,9 +4192,25 @@ GRANT ALL ON FUNCTION "public"."guard_submitted_base_plan_assignment"() TO "serv
 
 
 
+REVOKE ALL ON FUNCTION "public"."guard_unit_customization_deadline"() FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."guard_unit_customization_deadline"() TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."list_customer_unit_cards"() FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."list_customer_unit_cards"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."list_customer_unit_cards"() TO "service_role";
+
+
+
 REVOKE ALL ON FUNCTION "public"."list_unit_architects"("p_unit_id" "uuid") FROM PUBLIC;
-GRANT ALL ON FUNCTION "public"."list_unit_architects"("p_unit_id" "uuid") TO "authenticated";
 GRANT ALL ON FUNCTION "public"."list_unit_architects"("p_unit_id" "uuid") TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."manage_unit"("p_unit_id" "uuid", "p_customer_id" "uuid", "p_closes_at" timestamp with time zone, "p_module_deadlines" "jsonb") FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."manage_unit"("p_unit_id" "uuid", "p_customer_id" "uuid", "p_closes_at" timestamp with time zone, "p_module_deadlines" "jsonb") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."manage_unit"("p_unit_id" "uuid", "p_customer_id" "uuid", "p_closes_at" timestamp with time zone, "p_module_deadlines" "jsonb") TO "service_role";
 
 
 
@@ -3752,14 +4224,24 @@ GRANT ALL ON FUNCTION "public"."record_draft_history"() TO "service_role";
 
 
 
+REVOKE ALL ON FUNCTION "public"."record_unit_access"("p_unit_id" "uuid") FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."record_unit_access"("p_unit_id" "uuid") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."record_unit_access"("p_unit_id" "uuid") TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."register_customer_account"("p_name" "text", "p_email" "text") FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."register_customer_account"("p_name" "text", "p_email" "text") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."register_customer_account"("p_name" "text", "p_email" "text") TO "service_role";
+
+
+
 REVOKE ALL ON FUNCTION "public"."request_architect_assistance"("p_customer_id" "uuid", "p_unit_id" "uuid", "p_architect_user_id" "uuid", "p_message" "text") FROM PUBLIC;
-GRANT ALL ON FUNCTION "public"."request_architect_assistance"("p_customer_id" "uuid", "p_unit_id" "uuid", "p_architect_user_id" "uuid", "p_message" "text") TO "authenticated";
 GRANT ALL ON FUNCTION "public"."request_architect_assistance"("p_customer_id" "uuid", "p_unit_id" "uuid", "p_architect_user_id" "uuid", "p_message" "text") TO "service_role";
 
 
 
 REVOKE ALL ON FUNCTION "public"."resolve_architect_assistance"("p_request_id" "uuid", "p_note" "text") FROM PUBLIC;
-GRANT ALL ON FUNCTION "public"."resolve_architect_assistance"("p_request_id" "uuid", "p_note" "text") TO "authenticated";
 GRANT ALL ON FUNCTION "public"."resolve_architect_assistance"("p_request_id" "uuid", "p_note" "text") TO "service_role";
 
 
@@ -3770,7 +4252,6 @@ GRANT SELECT ON TABLE "public"."configuration_reviews" TO "authenticated";
 
 
 REVOKE ALL ON FUNCTION "public"."review_unit_configuration"("p_unit_id" "uuid", "p_expected_revision" integer, "p_decision" "text", "p_note" "text") FROM PUBLIC;
-GRANT ALL ON FUNCTION "public"."review_unit_configuration"("p_unit_id" "uuid", "p_expected_revision" integer, "p_decision" "text", "p_note" "text") TO "authenticated";
 GRANT ALL ON FUNCTION "public"."review_unit_configuration"("p_unit_id" "uuid", "p_expected_revision" integer, "p_decision" "text", "p_note" "text") TO "service_role";
 
 
@@ -3781,7 +4262,6 @@ GRANT SELECT ON TABLE "public"."unit_proposal_reviews" TO "authenticated";
 
 
 REVOKE ALL ON FUNCTION "public"."review_unit_proposal"("p_unit_id" "uuid", "p_expected_revision" integer, "p_decision" "text", "p_note" "text") FROM PUBLIC;
-GRANT ALL ON FUNCTION "public"."review_unit_proposal"("p_unit_id" "uuid", "p_expected_revision" integer, "p_decision" "text", "p_note" "text") TO "authenticated";
 GRANT ALL ON FUNCTION "public"."review_unit_proposal"("p_unit_id" "uuid", "p_expected_revision" integer, "p_decision" "text", "p_note" "text") TO "service_role";
 
 
@@ -3822,7 +4302,6 @@ GRANT SELECT ON TABLE "public"."unit_module_states" TO "authenticated";
 
 
 REVOKE ALL ON FUNCTION "public"."save_unit_module_choices"("p_customer_id" "uuid", "p_unit_id" "uuid", "p_module_code" "text", "p_selections" "jsonb", "p_expected_revision" integer) FROM PUBLIC;
-GRANT ALL ON FUNCTION "public"."save_unit_module_choices"("p_customer_id" "uuid", "p_unit_id" "uuid", "p_module_code" "text", "p_selections" "jsonb", "p_expected_revision" integer) TO "authenticated";
 GRANT ALL ON FUNCTION "public"."save_unit_module_choices"("p_customer_id" "uuid", "p_unit_id" "uuid", "p_module_code" "text", "p_selections" "jsonb", "p_expected_revision" integer) TO "service_role";
 
 
@@ -3833,8 +4312,36 @@ GRANT SELECT ON TABLE "public"."architect_authorizations" TO "authenticated";
 
 
 REVOKE ALL ON FUNCTION "public"."set_architect_authorization"("p_customer_id" "uuid", "p_unit_id" "uuid", "p_architect_user_id" "uuid", "p_active" boolean) FROM PUBLIC;
-GRANT ALL ON FUNCTION "public"."set_architect_authorization"("p_customer_id" "uuid", "p_unit_id" "uuid", "p_architect_user_id" "uuid", "p_active" boolean) TO "authenticated";
 GRANT ALL ON FUNCTION "public"."set_architect_authorization"("p_customer_id" "uuid", "p_unit_id" "uuid", "p_architect_user_id" "uuid", "p_active" boolean) TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."set_module_deadline"("p_unit_id" "uuid", "p_module_code" "text", "p_closes_at" timestamp with time zone) FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."set_module_deadline"("p_unit_id" "uuid", "p_module_code" "text", "p_closes_at" timestamp with time zone) TO "authenticated";
+GRANT ALL ON FUNCTION "public"."set_module_deadline"("p_unit_id" "uuid", "p_module_code" "text", "p_closes_at" timestamp with time zone) TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."units" TO "service_role";
+GRANT SELECT ON TABLE "public"."units" TO "authenticated";
+
+
+
+REVOKE ALL ON FUNCTION "public"."set_unit_active"("p_unit_id" "uuid", "p_active" boolean) FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."set_unit_active"("p_unit_id" "uuid", "p_active" boolean) TO "authenticated";
+GRANT ALL ON FUNCTION "public"."set_unit_active"("p_unit_id" "uuid", "p_active" boolean) TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."set_unit_customer"("p_unit_id" "uuid", "p_customer_id" "uuid") FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."set_unit_customer"("p_unit_id" "uuid", "p_customer_id" "uuid") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."set_unit_customer"("p_unit_id" "uuid", "p_customer_id" "uuid") TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."set_unit_deadline"("p_unit_id" "uuid", "p_closes_at" timestamp with time zone) FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."set_unit_deadline"("p_unit_id" "uuid", "p_closes_at" timestamp with time zone) TO "authenticated";
+GRANT ALL ON FUNCTION "public"."set_unit_deadline"("p_unit_id" "uuid", "p_closes_at" timestamp with time zone) TO "service_role";
 
 
 
@@ -3850,7 +4357,6 @@ GRANT SELECT ON TABLE "public"."unit_proposals" TO "authenticated";
 
 
 REVOKE ALL ON FUNCTION "public"."submit_unit_proposal"("p_customer_id" "uuid", "p_unit_id" "uuid", "p_expected_module_revisions" "jsonb") FROM PUBLIC;
-GRANT ALL ON FUNCTION "public"."submit_unit_proposal"("p_customer_id" "uuid", "p_unit_id" "uuid", "p_expected_module_revisions" "jsonb") TO "authenticated";
 GRANT ALL ON FUNCTION "public"."submit_unit_proposal"("p_customer_id" "uuid", "p_unit_id" "uuid", "p_expected_module_revisions" "jsonb") TO "service_role";
 
 
@@ -3865,18 +4371,9 @@ GRANT ALL ON FUNCTION "public"."unit_module_revision_snapshot"("p_unit_id" "uuid
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
+REVOKE ALL ON FUNCTION "public"."validate_unit_session"("p_unit_id" "uuid", "p_selections" "jsonb") FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."validate_unit_session"("p_unit_id" "uuid", "p_selections" "jsonb") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."validate_unit_session"("p_unit_id" "uuid", "p_selections" "jsonb") TO "service_role";
 
 
 
@@ -3907,8 +4404,18 @@ GRANT SELECT ON TABLE "public"."base_plan_option_availability" TO "authenticated
 
 
 
+GRANT ALL ON TABLE "public"."base_plan_option_defaults" TO "service_role";
+GRANT SELECT ON TABLE "public"."base_plan_option_defaults" TO "authenticated";
+
+
+
 GRANT ALL ON TABLE "public"."base_plan_option_exclusions" TO "service_role";
 GRANT SELECT ON TABLE "public"."base_plan_option_exclusions" TO "authenticated";
+
+
+
+GRANT ALL ON TABLE "public"."base_plan_option_requirements" TO "service_role";
+GRANT SELECT ON TABLE "public"."base_plan_option_requirements" TO "authenticated";
 
 
 
@@ -4008,6 +4515,17 @@ GRANT SELECT ON TABLE "public"."staff_users" TO "authenticated";
 
 
 
+GRANT ALL ON TABLE "public"."unit_activity_events" TO "service_role";
+GRANT SELECT ON TABLE "public"."unit_activity_events" TO "authenticated";
+
+
+
+GRANT ALL ON SEQUENCE "public"."unit_activity_events_id_seq" TO "anon";
+GRANT ALL ON SEQUENCE "public"."unit_activity_events_id_seq" TO "authenticated";
+GRANT ALL ON SEQUENCE "public"."unit_activity_events_id_seq" TO "service_role";
+
+
+
 GRANT ALL ON TABLE "public"."unit_base_plan_assignments" TO "service_role";
 GRANT SELECT ON TABLE "public"."unit_base_plan_assignments" TO "authenticated";
 
@@ -4038,17 +4556,6 @@ GRANT SELECT ON TABLE "public"."unit_proposal_versions" TO "authenticated";
 
 
 
-GRANT ALL ON TABLE "public"."units" TO "service_role";
-GRANT SELECT ON TABLE "public"."units" TO "authenticated";
-
-
-
-
-
-
-
-
-
 ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON SEQUENCES TO "postgres";
 ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON SEQUENCES TO "anon";
 ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON SEQUENCES TO "authenticated";
@@ -4073,30 +4580,6 @@ ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TAB
 ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "anon";
 ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "authenticated";
 ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "service_role";
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 

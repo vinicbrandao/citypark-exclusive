@@ -146,12 +146,12 @@ function validateRow(row) {
 
   if (
     data.ownership_role
-    && !['owner', 'co_owner'].includes(
+    && !['owner'].includes(
       data.ownership_role,
     )
   ) {
     errors.push(
-      'ownership_role deve ser owner ou co_owner',
+      'ownership_role deve ser owner; coproprietário não possui conta separada',
     );
   }
 

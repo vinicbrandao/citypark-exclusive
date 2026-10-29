@@ -1246,3 +1246,113 @@ No computador de desenvolvimento com Docker Desktop e Supabase local ativos: apl
 - Cards visuais têm base de 220 × 190 px, com área de imagem de 64 px. A altura é fixa e descrições maiores ampliam apenas a largura individual. Em janelas baixas, mantêm 140 px e miniatura de 36 px, com espaçamentos de texto compactos. A altura dos cards de Planta permanece a da seção 51/52.
 - Passaram os 17 testes JavaScript e build. O teste de layout passou nos três perfis e sete dimensões, agora percorrendo os quatro grupos de Bancadas nos dois estados da sidebar. Também confere que o enquadramento de cada miniatura contém todos os pixels não transparentes da peça, sem ocultar partes, e que o texto dos cards não ultrapassa sua área.
 - Capturas conferidas: `outputs/qa/countertops-counter.png`, `countertops-stone.png`, `countertops-rodamao.png` e `countertops-service.png`. Tela estática, imagens proporcionais, seleção, salvamento, ajuda e revisão preservados. Sem alteração de banco ou regras de negócio.
+
+
+---
+
+# 55. Requisitos de sessão, acesso e gestão — 27/10/2026
+
+- Implementação vigente e instruções: [implementacao-requisitos-2026-10-27.md](implementacao-requisitos-2026-10-27.md). As decisões desta seção substituem as regras antigas de rascunho, coproprietário, autorização por unidade e proposta/parecer.
+- Migrations locais aplicadas: 20261027000100 (sessão/acesso/gestão), 20261027000200 (cadastro e lembretes) e 20261027000300 (primeiro acesso e encerramento dos RPCs legados). Cópia recuperável anterior em outputs/backups, ignorada pelo Git. Schema sem dados e lista de migrations atualizados.
+- Escolhas só existem durante a sessão e iniciam nos padrões do banco; sair descarta. Arquiteta/Admin consultam todas as unidades numa tabela, inclusive inativas. Cliente acessa apenas unidades ativas da sua conta proprietária. Vínculos de coproprietário ficam inativos e históricos preservados.
+- Admin cadastra clientes pela Edge Function admin-customer e gerencia vínculo/prazos. Sem prazo, edição liberada; vencido exige reabertura administrativa. Status ativo/inativo pode ser alterado pela equipe; reativação de concluída exige Admin e volta a Pendente.
+- Compatibilidade tem exclusões e dependências entre módulos, validadas no navegador e no banco, sem salvar escolhas. Histórico identifica primeiro acesso, ator, unidade, horário e alterações administrativas.
+- Lembretes têm fila e Edge Function com transporte HTTP configurável. Provedor/SMTP ainda indefinido: não há agendamento nem disparo externo ativo. Teste usa receptor local simulado.
+- Admin inicial exclusive@planoaengenharia.com.br provisionado apenas no Supabase local, por autorização explícita, sem e-mail enviado.
+- Validações: 17 testes JavaScript, build, dois conjuntos SQL com rollback, jornada real de cliente/arquiteta/Admin e cadastro pela função local, sete dimensões de layout e teste do worker com deduplicação passaram. Capturas em outputs/qa/requirements-*.png.
+- Contrato/PDF e finalização após geração foram adiados pelo responsável. O configurador não gera nem envia contrato nesta etapa. Dados oficiais de catálogo, preços, quantitativos e dependências continuam pendentes; apenas demonstração foi cadastrada.
+
+
+---
+
+# 56. Unidades inativas na seleção do cliente — 27/10/2026
+
+- Acesso em preparação permanece para contas sem vínculo ativo de proprietário. Uma unidade inativa com vínculo válido continua na seleção, em tons de cinza. Clicar em qualquer parte do card abre um aviso de inatividade ou personalização concluída; Enter/Espaço também abrem, Escape fecha e restaura o foco.
+- Migration 20261027000400 adiciona list_customer_unit_cards, que retorna somente metadados dos cards da própria conta. A RLS de units e os RPCs de personalização continuam negando acesso do cliente a unidades inativas. Não foi ampliada a leitura das configurações.
+- O bootstrap diferencia ausência de vínculo de unidade inativa. Testados cliente com unidades mistas, somente inativas, unidade concluída e conta nova sem unidades; fluxo original dessa conta foi preservado.
+- 18 testes JavaScript e build passaram; teste SQL com rollback e jornada no navegador validaram o bloqueio do configurador e o popup por mouse/teclado em desktop/celular. Capturas em outputs/qa/inactive-*.png. Schema e lista de migrations locais atualizados.
+
+
+---
+
+# 57. Primeiro acesso e entrega real de e-mail — 27/10/2026
+
+- Corrigido o caso de conta Auth nova, sem confirmação de e-mail: signInWithOtp retornava signup_disabled com cadastro público desabilitado e o erro era ocultado. Agora usa resetPasswordForEmail e verifyOtp do tipo recovery; cadastro público continua bloqueado.
+- Modelo recovery.html em português com código de seis dígitos e validade de dez minutos. Erros de envio não são tratados como sucesso. Aviso de caixa local aparece apenas no desenvolvimento quando esse modo é selecionado.
+- SMTP local conectado ao Resend com arquivo privado supabase/.env.auth-smtp.local. Configuração versionada contém apenas referências de ambiente. Comandos de Supabase usam wrapper para carregar as credenciais; nenhum serviço remoto foi alterado.
+- Responsável confirmou recebimento no Gmail, definição da própria senha e acesso à unidade vinculada. A senha não foi definida pelo agente.
+- O remetente de testes onboarding@resend.dev só permite o e-mail da conta Resend. O responsável adiou a verificação de domínio: por enquanto, testar apenas a própria conta. Envio aos demais clientes depende de verificar domínio e trocar remetente.
+- 23 testes JavaScript e build passaram. Teste real em Mailpit cobriu UI de cadastro/vínculo, emissão do código, verificação, definição de senha, login posterior, cooldown e rejeição de código reutilizado. Teste recusa SMTP real para evitar enviar dados fictícios externamente.
+- Roteiro atual: [validacao-primeiro-acesso-2026-10-27.md](validacao-primeiro-acesso-2026-10-27.md).
+
+---
+
+# 58. Implantação nas contas oficiais — 28/10/2026
+
+- Responsável confirmou que o Exclusive terá contas novas, sem importação do Firebase. Autorizou continuar com o processo recomendado de Supabase Auth e entrega gerenciada, usando contas oficiais do CityPark em lugar das pessoais.
+- Preparado [roteiro de configuração oficial](configuracao-oficial-autenticacao.md), com distinção entre conta administrativa dos provedores, remetente verificado e Admin do aplicativo. Endereço oficial responsável ainda aguarda confirmação.
+- Consulta pública identificou DNS no Registro.br e registros de e-mail da Locaweb em cityparkmcz.com.br. Isso não confirma uma contratação ativa. Nenhum registro DNS foi alterado.
+- Corrigida a inclusão do modelo supabase/.env.auth-smtp.example no Git; credenciais privadas continuam ignoradas. Configuração local de teste preservada até validar a oficial. Nenhum projeto remoto, equipe Resend ou privilégio remoto foi criado nesta etapa.
+
+## Avanço do cadastro oficial
+
+- Responsável confirmou acesso à caixa exclusive@planoaengenharia.com.br e concluiu cadastro/verificação no Resend. Sessão conferida nessa identidade e na equipe planoaengenharia.
+- Cadastrado acesso.cityparkmcz.com.br no Resend oficial em São Paulo; registros reais TXT/CNAME documentados no roteiro. Verificação de DNS ainda pendente, recebimento desabilitado, SMTP local preservado e nenhuma chave oficial criada.
+- Painel do Registro.br aberto para o responsável entrar na conta que administra cityparkmcz.com.br. Nenhum registro DNS alterado e nenhum Supabase online configurado até aqui.
+
+## Publicação DNS autorizada
+
+- Responsável solicitou confirmação antes de mudanças importantes e autorizou expressamente as três adições apresentadas. Rascunho comparado com a cópia aprovada antes de salvar.
+- Zona reaberta após salvamento: 28 registros persistidos, os 25 anteriores preservados e somente TXT DKIM e dois CNAMEs aprovados adicionados. Cópias anterior/posterior guardadas localmente em outputs/backups, fora do Git.
+- Os três novos nomes já resolvem publicamente; acionada verificação do domínio no Resend oficial, inicialmente Pending. Cadastro do Supabase aberto com e-mail oficial para conclusão pelo responsável. Nenhuma chave oficial criada, nenhum SMTP substituído e nenhum projeto Supabase online criado nesta etapa.
+- Resend confirmou Domain verified às 15h32 de 28/10 (São Paulo), com os três registros Verified e recebimento desabilitado. TXT público confere integralmente com a chave DKIM emitida. Evidência local em outputs/qa/resend-official-domain-verified-20261028.png. Próxima dependência: concluir acesso oficial ao Supabase; depois criar chave oficial e aplicar a integração com autorização para as mudanças importantes.
+
+## Organização Supabase oficial criada
+
+- Responsável autorizou a organização no plano gratuito. Nome CityPark Exclusive preservado conforme formulário na retomada. Organização confirmada como Free, ID paifzhzwppdrfavbxsbi, na conta oficial exclusive@planoaengenharia.com.br.
+- Projeto citypark-exclusive preparado na região São Paulo (sa-east-1). Senha do banco e confirmação de criação pendentes do responsável; nenhum projeto foi criado pelo agente. Exposição automática de tabelas desabilitada: conferir grants explícitos antes da implantação.
+
+## Projeto oficial criado e implantação preparada
+
+- Responsável criou citypark-exclusive, ref grfmiuopojbxxbdymqax, na organização oficial CityPark Exclusive. Painel confirmou Healthy e região São Paulo. Consulta de leitura retornou 0 tabelas públicas e 0 usuários Auth.
+- Gerador scripts/prepare-official-deployment.mjs produz pacote transacional e manifesto com hashes das 25 migrations; nenhum seed ou conta incluído. Proteções exigem banco vazio, histórico de versões vazio e RLS em todas as tabelas resultantes.
+- scripts/test-official-bootstrap-local.mjs validou o pacote em banco temporário separado no Docker local e removeu-o ao final: 41 tabelas, todas com RLS, zero usuários/clientes/unidades/equipe, privilégios essenciais corretos, escrita legada bloqueada e repetição recusada. Os 23 testes JavaScript e build passaram.
+- [Revisão concreta da implantação](implantacao-banco-oficial-2026-10-28.md). Nenhuma migration aplicada no projeto oficial: autorização ainda pendente. Editor não respondeu à carga integral; painel recuperado em nova aba. Não executar rascunho do editor sem conferir integridade com o pacote local revisado.
+
+## Instalação otimizada autorizada e retomada em 29/10/2026
+
+- O responsável autorizou criar a estrutura e pediu evitar tabelas desnecessárias. A instalação foi otimizada para 19 tabelas, retirando 22 estruturas de fluxos antigos. A versão de otimização só executa a limpeza em instalação inicial explicitamente selecionada e recusa dados existentes; o banco local foi preservado.
+- Script de 26 versões validado em banco temporário local, com cenários de isolamento de clientes, unidades inativas, permissões de Admin/arquiteta, prazos, cadastro, importação e lembretes. Instalação repetida e limpeza com dados recusadas. Arquivo do editor conferido integralmente antes da execução oficial.
+- Painel confirmou instalação concluída. Consulta de leitura em 29/10 confirmou 19 tabelas, zero tabelas sem RLS, 26 versões, zero contas Auth/clientes/unidades/equipe. Evidência em outputs/qa/supabase-official-schema-verified-20261029.png. Não executar novamente a instalação inicial.
+- Resend oficial permanece com domínio Verified e sem chaves. Formulário preparado para chave somente de envio e limitada ao subdomínio do Exclusive. Formulário SMTP no Supabase preparado sem senha e sem salvar. Criação/entrada da credencial pendente do responsável; primeiro Admin remoto continua dependendo de autorização específica.
+
+## SMTP oficial salvo pelo responsável
+
+- Responsável concluiu a chave e salvou no Supabase. Nova página confirmou configuração persistida: SMTP habilitado, smtp.resend.com:587, nome City Park Exclusive e credencial armazenada oculta. Nenhum segredo lido ou copiado. Ainda sem teste de entrega oficial.
+- Código de seis dígitos/600 segundos e mensagem de recuperação em português preparados sem salvar. Cadastro público ainda habilitado por padrão; seu bloqueio faz parte da autorização solicitada. Prévia em outputs/qa/supabase-official-recovery-preview-20261029.png.
+- Solicitada autorização específica para ajustes e primeiro Admin oficial. Script guardado em scripts/provision-official-admin.sql, sem execução. Conta Auth não criada; formulário com e-mail oficial e senha vazia, confirmação automática desmarcada.
+
+## Autenticação oficial concluída e validada — 29/10/2026
+
+- Autorizações recebidas: ajustes de login e Admin oficial; publicação de admin-customer com verificação de sessão na função; cliente Vinícius/Gmail e unidade 1505 A para validação. Configurações remotas salvas: código de seis dígitos por dez minutos, mensagem em português, cadastro público bloqueado. SMTP e domínio oficiais verificados.
+- Responsável criou o Admin com a própria senha e informou confirmação automática marcada. Atribuição específica guardada em scripts/provision-official-admin.sql executada após autorização; retorno admin/true. Responsável recebeu e-mail oficial, definiu senha pelo Exclusive e acessou como Admin.
+- admin-customer publicado e config.toml alinhado com verify_jwt=false para chaves atuais; o handler valida Auth.getUser e papel Admin. Pedidos reais sem login e com token inválido rejeitados com 403. O Admin autenticado cadastrou Vinícius pelo painel, sem convite nem senha escolhida pelo operador.
+- Unidade 1505A criada sem catálogo, área ou prazo inventados e com tipologia A confirmar; vínculo owner realizado pelo painel Admin. Responsável confirmou código no Gmail, definição de senha e acesso à seleção da própria unidade. Planta continua em preparação, sem planta-base atribuída.
+- Consulta final: 19 tabelas protegidas, duas contas Auth, um cliente, uma unidade, um Admin e um vínculo ativo owner; e-mail do cliente confirmado. Evidência outputs/qa/exclusive-official-customer-first-access-20261029.png.
+- 31 testes passaram e build official concluído. .env.official.local só contém URL/chave pública e permanece ignorado. Servidor de validação em 127.0.0.1:5175/exclusive usa o banco oficial; o ambiente local padrão foi preservado. Nenhuma publicação de frontend no site atual, importação Firebase ou importação de catálogo de demonstração. Próximas etapas: dados oficiais de plantas/opções/unidades e publicação revisada da interface.
+
+## Avisos de prazo — preparação em 29/10/2026
+
+- Responsável priorizou os avisos de prazo. Fila deadline_notifications e funções de reserva/registro existentes serão reutilizadas, sem novas tabelas do aplicativo.
+- Worker deadline-reminders atualizado para transporte direto pela API Resend oficial, mantendo webhook para testes locais. Configuração de login não alterada. Chave do provedor e token do agendador ficam somente em segredos do servidor.
+- Lote limitado a dez avisos, timeout por pedido, intervalo de 600ms, mesma chave de idempotência nas tentativas, resposta do provedor conferida antes de registrar aceite e erros registrados sem conteúdo de credenciais. Mensagem identifica módulo/unidade e data/hora em São Paulo; singular corrigido no aviso de um dia.
+- Nove testes isolados novos passaram; suíte completa com 40 testes passou. Cobertos autenticação, configuração ausente/insegura, quatro marcos, módulo, fuso, falha de transporte/recibo, falha de registro com repetição idêntica, fila vazia e webhook local. Docker local não disponibilizou o daemon nesta retomada; os testes SQL anteriores da fila não foram reexecutados ainda. Nenhum fixture novo foi executado no banco oficial.
+- Publicação preparada no editor e fonte comparada integralmente ao repositório. Não publicada ainda. scripts/enable-official-deadline-schedule.sql preparado para verificação a cada dez minutos, com token no Vault e recusa de job duplicado. docs/avisos-de-prazo.md descreve implantação e teste real proposto.
+- Solicitadas autorizações para publicação/agendamento e teste temporário de 15 dias na unidade 1505 A, com envio ao Gmail controlado e restauração do prazo nulo. Formulário Secrets preparado com DEADLINE_EMAIL_PROVIDER=resend, remetente oficial e valores de RESEND_API_KEY/DEADLINE_REMINDER_TOKEN vazios. Nenhuma configuração salva, novo segredo gerado ou mensagem de prazo enviada nesta preparação.
+
+## Avisos autorizados e função publicada
+
+- Recebidas autorizações específicas para publicar/agendar a cada dez minutos, durante todo o dia, e testar com prazo temporário de 15 dias na 1505 A/Gmail controlado.
+- deadline-reminders publicado após conferência integral da fonte. Gateway legado desativado; segredo exclusivo validado pelo handler. Testes HTTP reais sem autorização e com token errado retornaram 401.
+- Responsável salvou os quatro campos privados nas Edge Functions; conferidas somente presença e digests. Solicitado ao responsável colar o mesmo token no Vault, em formulário com nome citypark_deadline_reminder_token preparado. Nenhum segredo lido ou registrado na conversa.
+- Extensões pg_cron 1.6.4 e pg_net 0.20.4 habilitadas após autorização. Job ainda não criado, sem alteração de prazo nem envio real de aviso. Pendentes: token Vault, teste autenticado com fila vazia, teste de envio/deduplicação com restauração do prazo e ativação/verificação do job. Essas ações já estão autorizadas, não pedir novamente.

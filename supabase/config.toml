@@ -4,6 +4,14 @@
 # working directory name when running `supabase init`.
 project_id = "citypark-exclusive"
 
+[functions.admin-customer]
+# New cloud projects use asymmetric signing keys. The handler validates the
+# caller with Auth.getUser and requires current_staff_role() = 'admin'.
+verify_jwt = false
+
+[functions.deadline-reminders]
+verify_jwt = false
+
 [api]
 enabled = true
 # Port to use for the API URL.
@@ -236,15 +244,20 @@ otp_expiry = 600
 subject = "Seu código de acesso ao City Park Exclusive"
 content_path = "./supabase/templates/magic_link.html"
 
-# Use a production-ready SMTP server
-# [auth.email.smtp]
-# enabled = true
-# host = "smtp.sendgrid.net"
-# port = 587
-# user = "apikey"
-# pass = "env(SENDGRID_API_KEY)"
-# admin_email = "admin@email.com"
-# sender_name = "Admin"
+[auth.email.template.recovery]
+subject = "Defina sua senha — City Park Exclusive"
+content_path = "./supabase/templates/recovery.html"
+
+# BEGIN CITYPARK_AUTH_SMTP
+[auth.email.smtp]
+enabled = true
+host = "env(CITYPARK_AUTH_SMTP_HOST)"
+port = 587
+user = "env(CITYPARK_AUTH_SMTP_USER)"
+pass = "env(CITYPARK_AUTH_SMTP_PASS)"
+admin_email = "env(CITYPARK_AUTH_SMTP_FROM)"
+sender_name = "env(CITYPARK_AUTH_SMTP_SENDER_NAME)"
+# END CITYPARK_AUTH_SMTP
 
 # Uncomment to customize email template
 # [auth.email.template.invite]
