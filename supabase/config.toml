@@ -9,6 +9,10 @@ project_id = "citypark-exclusive"
 # caller with Auth.getUser and requires current_staff_role() = 'admin'.
 verify_jwt = false
 
+[functions.admin-staff]
+# Handler validates Auth identity and Admin role before every operation.
+verify_jwt = false
+
 [functions.deadline-reminders]
 verify_jwt = false
 

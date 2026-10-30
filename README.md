@@ -2,11 +2,15 @@
 
 ## Comece por aqui
 
+Estado atual e próximo passo: [checkpoint do projeto](docs/EXCLUSIVE_STATUS.md). Leia primeiro; os roteiros datados abaixo podem conter etapas já concluídas.
+
 Plano vigente: [Roteiro para Vinícius e Allef](docs/inicio-vinicius.md). Instalação, login, cadastros, calendários preliminares e homologação. Substitui a ordem de prioridades da passagem inicial.
 
 ## Requisitos atualizados em 27/10/2026
 
 Implementação vigente: [mudanças de sessão, acesso e gestão](docs/implementacao-requisitos-2026-10-27.md). O contrato/PDF será feito depois.
+
+Permissões de produção de 30/10: [atualização preparada e testada](docs/implantacao-permissoes-2026-10-30.md), ainda não aplicada ao Supabase oficial. Validação do novo modelo: `node scripts/test-official-bootstrap-local.mjs` e `node scripts/test-permissions-upgrade-local.mjs`, ambos em bancos temporários locais. Os roteiros antigos que excluem fixtures recusam o novo esquema para preservar histórico.
 
 - A personalização fica apenas na sessão atual. Toda abertura inicia nos padrões da planta-base; sair descarta as escolhas. Não há Salvar progresso nem proposta/parecer técnico.
 - Cada unidade tem uma única conta de cliente. Arquiteta e Admin consultam todas as unidades em uma tabela, inclusive inativas; cliente vê os cards vinculados à sua conta, com cinza e aviso nas inativas, e entra no configurador apenas das ativas.
@@ -55,7 +59,13 @@ Implantação com contas da empresa: [configuração oficial do CityPark](docs/c
 
 Projeto oficial com 19 tabelas protegidas e 26 versões registradas. SMTP oficial, primeiro Admin, cadastro de cliente pela função publicada e primeiro acesso por e-mail validados em 29/10/2026. Dados autorizados de validação: um cliente e a unidade 1505 A. [Registro da implantação](docs/implantacao-banco-oficial-2026-10-28.md).
 
-Validação conectada ao Supabase oficial: `.env.official.local` contém somente URL e chave pública, fora do Git. Execute `npm run dev -- --mode official --port 5175 --strictPort` e acesse `http://127.0.0.1:5175/exclusive/`. Esse modo acessa o banco oficial; não executar scripts de demonstração nele. A configuração padrão de desenvolvimento local permanece separada. O frontend ainda não foi publicado no domínio público.
+Inventário real cadastrado em 30/10: **389 unidades (209 A + 180 B)**, com identificação por torre/andar/terminação. As 388 novas estão inativas e sem dados técnicos; 1505 A e seu proprietário foram preservados. [Inventário e próximo preenchimento](docs/inventario-unidades-2026-10-30.md).
+
+Validação conectada ao Supabase oficial: `.env.official.local` contém somente URL e chave pública, fora do Git. Execute `npm run dev:official` e acesse `http://127.0.0.1:5175/exclusive/`. Esse modo acessa o banco oficial; alterações administrativas nessa tela afetam os dados oficiais. Não executar scripts de demonstração nele. A inicialização recusa uma URL diferente do projeto oficial ou chave pública ausente.
+
+Para testar com o banco Docker separado, use `npm run dev:local` e `http://127.0.0.1:5173/exclusive/`. `npm run dev` também continua usando a configuração local padrão. Os bancos não sincronizam automaticamente: código/migrations são versionados; dados e contas permanecem em cada ambiente. O frontend ainda não foi publicado no domínio público.
+
+Para gerar os arquivos conectados ao banco oficial, use `npm run build:official`. Gerar o build não publica o site.
 
 Fluxo validado e configuração SMTP: [validação do primeiro acesso](docs/validacao-primeiro-acesso-2026-10-27.md). O SMTP local está conectado ao Resend. O remetente de testes só entrega ao e-mail da conta Resend; verificar domínio antes de liberar entrega aos demais clientes. Credenciais ficam em `supabase/.env.auth-smtp.local`, fora do Git.
 

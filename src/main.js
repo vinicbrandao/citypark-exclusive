@@ -142,11 +142,22 @@ async function openSession(session) {
   if (!userId) { busy = false; pendingEmail = ''; showLogin(); return; }
   shell('<h1>Carregando suas unidades…</h1>');
   try {
+    const account = await client.rpc('current_account_active');
+    if (request !== generation) return;
+    // Compatibility with the deployed 26-version schema during staged rollout.
+    if (account.error && account.error.code !== 'PGRST202') throw account.error;
+    const permissionsV2 = !account.error;
+    if (permissionsV2 && account.data !== true) {
+      shell('<h1>Conta inativa</h1><p>Seu acesso foi desativado. Entre em contato com a equipe do Exclusive.</p><button id="logout" class="auth-primary">Sair</button>');
+      document.querySelector('#logout').onclick = signOut;
+      return;
+    }
     const staffResult = await client.rpc('current_staff_role');
     if (request !== generation) return;
     if (staffResult.error) throw staffResult.error;
     const adapter = await createConfiguratorAdapter({
       client,
+      permissionsV2,
       staffRole: staffResult.data,
       onSignOut: signOut
     });

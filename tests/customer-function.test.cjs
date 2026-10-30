@@ -11,6 +11,7 @@ function fixture(options = {}) {
   const calls = [];
   let handler;
   const user = {
+    from(){return {select(){return this;},eq(){return this;},async single(){return {data:{email:'client@example.test'},error:null};}};},
     auth: { async getUser() { return options.identityError
       ? { error: { message: 'Invalid JWT' }, data: { user: null } }
       : { error: null, data: { user: { id: 'fixture-admin' } } }; } },
@@ -18,11 +19,13 @@ function fixture(options = {}) {
       calls.push({ name, args });
       if (name === 'current_staff_role') return { data: options.role || 'admin', error: null };
       if (name === 'find_customer_auth_user') return { data: options.existing ? 'existing-user' : null, error: null };
+      if(name==='prepare_customer_email') return {data:'existing-user',error:options.permissionError?{}:null};
+      if(['update_customer_contact','cancel_customer_email'].includes(name)) return {data:null,error:null};
       if (name === 'register_customer_account') return { data: 'fixture-customer', error: null };
       throw Error(`Unexpected RPC: ${name}`);
     }
   };
-  const service = { auth: { admin: { async createUser(data) {
+  const service = { auth: { admin: { async updateUserById(id,data){calls.push({name:'updateUserById',id,data});return {error:options.updateError?{}:null};}, async createUser(data) {
     calls.push({ name: 'createUser', data });
     return { data: { user: { id: 'new-user' } }, error: options.creationError ? { message: 'Creation failed' } : null };
   } } } };
@@ -98,4 +101,17 @@ test('customer function preflight and unsupported methods never access Auth or d
   assert.equal((await f.request(undefined, '', 'OPTIONS')).status, 200);
   assert.equal((await f.request(undefined, '', 'GET')).status, 405);
   assert.equal(f.calls.length, 0);
+});
+
+test('customer function rejects invalid phones and malformed JSON bodies before provisioning',async()=>{
+ for(const body of [null,[],{name:'Cliente',email:'client@example.test',phone:'invalid'}]){const f=fixture();assert.equal((await f.request(body)).status,400);noAccountWrites(f);}
+});
+test('customer edits preserve identity and use the privileged Auth API only after exact-address authorization',async()=>{
+ const f=fixture();const response=await f.request({action:'update',customerId:'32000000-0000-4000-8000-000000000001',name:'Cliente',email:'updated@example.test',phone:'+55 82 99999-0000'});assert.equal(response.status,200);assert.equal(f.calls.some(c=>c.name==='createUser'),false);const i=f.calls.findIndex(c=>c.name==='prepare_customer_email');const j=f.calls.findIndex(c=>c.name==='updateUserById');assert.ok(i<j);assert.equal(f.calls[j].id,'existing-user');assert.equal(f.calls[j].data.email,'updated@example.test');assert.equal(f.calls[j].data.email_confirm,false);assert.ok(f.calls.some(c=>c.name==='cancel_customer_email'));
+});
+test('a refused email authorization never calls the Auth update API',async()=>{
+ const f=fixture({permissionError:true});assert.equal((await f.request({action:'update',customerId:'32000000-0000-4000-8000-000000000001',name:'Cliente',email:'taken@example.test'})).status,400);assert.equal(f.calls.some(c=>c.name==='updateUserById'),false);
+});
+test('failed Auth updates clear the pending authorization and report partial contact success',async()=>{
+ const f=fixture({updateError:true});const result=await f.request({action:'update',customerId:'32000000-0000-4000-8000-000000000001',name:'Cliente',email:'updated@example.test'});assert.equal(result.status,400);assert.match((await result.json()).error,/Nome e telefone salvos/);assert.ok(f.calls.some(c=>c.name==='cancel_customer_email'));
 });

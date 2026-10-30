@@ -24,6 +24,8 @@ Deno.serve(async req => {
   for (const reminder of claimed.data) {
     let success = false; let error = null;
     try {
+      const eligible = await service.rpc('deadline_notification_eligible', { p_id: reminder.id });
+      if (eligible.error || eligible.data !== true) throw new Error('No longer eligible');
       const scope = reminder.module_name ? `do módulo ${reminder.module_name} da unidade ${reminder.unit_code}` : `da unidade ${reminder.unit_code}`;
       const date = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', dateStyle: 'short', timeStyle: 'short' }).format(new Date(reminder.deadline));
       const subject = `CityPark Exclusive — prazo da unidade ${reminder.unit_code}`;

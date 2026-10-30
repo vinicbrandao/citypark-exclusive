@@ -73,6 +73,8 @@ export function clearConfigurator() {
   managementUnitId = null;
   historyRows = null;
   customerFormOpen = false;
+  customerEditingId = null;
+  adminPanel = null;
   unavailableUnitId = null;
   workflowBusy = false;
   Object.assign(state, DEFAULT_STATE, { accordions: { ...DEFAULT_STATE.accordions } });
@@ -509,6 +511,8 @@ let helpOpen = false;
 let managementUnitId = null;
 let historyRows = null;
 let customerFormOpen = false;
+let customerEditingId = null;
+let adminPanel = null;
 let unavailableUnitId = null;
 let workflowBusy = false;
 const safe = value => String(value ?? '').replace(/[&<>"']/g, char => ({
@@ -549,11 +553,11 @@ function helpHtml() {
 }
 function staffUnitsHtml() {
   return `<div class="unit-screen unit-selection-screen">${headerHtml()}<main class="staff-units">
-    <div class="staff-heading"><div><p class="apartment-profile">${backend.staffRole === 'admin' ? 'Administrador' : 'Arquiteta'}</p><h1>Unidades do CityPark</h1></div><div class="unit-actions">${backend.staffRole === 'admin' ? '<button data-action="new-customer">Cadastrar cliente</button>' : ''}<button class="header-btn" data-action="history">Histórico geral</button></div></div>
+    <div class="staff-heading"><div><p class="apartment-profile">${backend.staffRole === 'admin' ? 'Administrador' : 'Arquiteta'}</p><h1>Unidades do CityPark</h1></div><div class="unit-actions">${backend.staffRole === 'admin' ? `<button data-action="new-customer">Cadastrar cliente</button>${backend.permissionsV2 ? '<button data-action="customers-panel">Clientes</button><button data-action="staff-panel">Equipe</button><button data-action="notifications-panel">Avisos</button>' : ''}` : ''}<button class="header-btn" data-action="history">Histórico geral</button></div></div>
     <p class="session-notice">As personalizações ficam apenas na sessão aberta. Sair da unidade descarta as escolhas.</p>
     <div class="unit-table-scroll"><table class="unit-table"><thead><tr><th>Unidade / planta-base</th><th>Cliente</th><th>Status</th><th>Prazo geral</th><th>Módulos</th><th>Ações</th></tr></thead><tbody>
     ${DATA.apartments.map(apt => `<tr><td><strong>${safe(apt.label)}</strong><small>${safe(apt.tower)} · ${safe(apt.floor)}</small><small>${safe(apt.basePlanName)}</small></td>
-      <td>${safe(apt.customer?.name || 'Sem cliente vinculado')}<small>${safe(apt.customer?.email)}</small></td>
+      <td>${safe(apt.customer?.name || 'Sem cliente vinculado')}<small>${safe(apt.customer?.email)}</small>${backend.permissionsV2 ? `<small>${safe(apt.customer?.phone || 'Telefone não informado')}</small>${apt.customer?.active === false ? '<small>Conta inativa</small>' : ''}` : ''}</td>
       <td><span class="unit-status ${apt.active ? 'is-active' : ''}">${apt.active ? 'Ativa' : 'Inativa'}</span><small>${apt.customizationStatus === 'completed' ? 'Concluída' : 'Pendente'}</small></td>
       <td>${safe(apt.customizationDeadline || 'Sem prazo')}</td>
       <td>${(backend.modules || []).map(m => `<small>${safe(m.name)}: ${safe(formatSessionDate(apt.moduleWindows?.find(w => w.module_code === m.code)?.closes_at))}</small>`).join('')}</td>
@@ -578,11 +582,23 @@ function managementHtml() {
     <p class="session-notice">Datas no horário do dispositivo. Campo vazio remove o prazo e libera alterações sem data limite.</p><button class="review-primary" type="submit">Salvar cadastro e prazos</button></form></div></div>`;
 }
 function historyHtml() {
-  const labels = { unit_first_opened: 'Acessou a unidade pela primeira vez', unit_opened: 'Acessou a unidade', unit_status_changed: 'Alterou o status', unit_deadline_changed: 'Alterou o prazo geral', module_deadline_changed: 'Alterou o prazo do módulo', unit_customer_changed: 'Alterou o cliente vinculado', customer_registered: 'Cadastrou ou atualizou um cliente' };
+  const labels = { unit_first_opened: 'Acessou a unidade pela primeira vez', unit_opened: 'Acessou a unidade', unit_status_changed: 'Alterou o status', unit_deadline_changed: 'Alterou o prazo geral', module_deadline_changed: 'Alterou o prazo do módulo', unit_customer_changed: 'Alterou o cliente vinculado', customer_registered: 'Cadastrou ou atualizou um cliente', customer_contact_changed: 'Atualizou o contato do cliente', customer_email_changed: 'Alterou o e-mail do cliente', customer_status_changed: 'Alterou o acesso do cliente', staff_access_changed: 'Alterou um acesso da equipe', deadline_retry_requested: 'Solicitou nova tentativa de aviso' };
   return `<div class="review-overlay"><div class="review-modal"><button class="close-review" data-action="close-history" aria-label="Fechar">×</button><h2>Histórico de atividades</h2><div class="activity-list">${historyRows.length ? historyRows.map(row => `<article><strong>${safe(row.actor_name)}</strong><span>${safe(labels[row.action] || row.action)} · ${safe(DATA.apartments.find(u => u.id === row.unit_id)?.label)}</span><small>${safe(formatSessionDate(row.created_at))}${row.details?.module_code ? ' · ' + safe(row.details.module_code) : ''}${row.action === 'unit_status_changed' ? ' · ' + (row.details.active ? 'Ativa' : 'Inativa') : ''}</small></article>`).join('') : '<p>Nenhuma atividade registrada.</p>'}</div></div></div>`;
 }
 function customerFormHtml() {
-  return '<div class="review-overlay"><div class="review-modal"><button class="close-review" data-action="close-customer" aria-label="Fechar">×</button><h2>Cadastrar cliente</h2><form id="customer-form"><label>Nome<input name="name" required maxlength="200" autocomplete="name"></label><label>E-mail da conta<input name="email" type="email" required maxlength="254" autocomplete="email"></label><p class="session-notice">O cliente definirá a senha em Primeiro acesso. Para atualizar o nome de uma conta existente, informe o mesmo e-mail.</p><button type="submit" class="review-primary">Cadastrar</button></form></div></div>';
+  const customer = backend.customers.find(c=>c.id===customerEditingId);
+  return `<div class="review-overlay"><div class="review-modal"><button class="close-review" data-action="close-customer" aria-label="Fechar">×</button><h2>${customer ? 'Editar cliente' : 'Cadastrar cliente'}</h2><form id="customer-form"><label>Nome<input name="name" required maxlength="200" autocomplete="name" value="${safe(customer?.name || '')}"></label><label>E-mail da conta<input name="email" type="email" required maxlength="254" autocomplete="email" value="${safe(customer?.email || '')}"></label>${backend.permissionsV2 ? `<label>Telefone<input name="phone" type="tel" maxlength="40" autocomplete="tel" value="${safe(customer?.phone || '')}"></label>` : ''}<p class="session-notice">${customer ? 'A troca de e-mail altera o endereço usado para entrar e recuperar a senha.' : 'O cliente definirá a senha em Primeiro acesso. Para atualizar uma conta existente, informe o mesmo e-mail.'}</p><button type="submit" class="review-primary">Salvar</button></form></div></div>`;
+}
+function adminPanelHtml() {
+  const kind = adminPanel.kind;
+  let content = '';
+  if(kind==='customers') content = `<p>Desativar a conta bloqueia todas as suas unidades e preserva os dados.</p><div class="activity-list">${backend.customers.map(c=>`<article><strong>${safe(c.name)}</strong><span>${safe(c.email)} · ${safe(c.phone || 'Telefone não informado')} · ${c.active ? 'Ativa' : 'Inativa'}</span><div class="unit-actions"><button data-action="edit-customer" data-id="${safe(c.id)}">Editar</button><button data-action="toggle-customer" data-id="${safe(c.id)}">${c.active ? 'Desativar conta' : 'Ativar conta'}</button></div></article>`).join('') || '<p>Nenhum cliente cadastrado.</p>'}</div>`;
+  if(kind==='staff') {
+    const edit = adminPanel.edit;
+    content = `<p>Revogar acesso preserva o histórico. O Admin principal não pode ser desativado ou rebaixado.</p><div class="activity-list">${adminPanel.rows.map(s=>`<article><strong>${safe(s.name)}</strong><span>${safe(s.email)} · ${s.role==='admin'?'Admin':'Arquiteta'} · ${s.active?'Ativo':'Inativo'}${s.protected?' · Principal':''}</span><button data-action="edit-staff" data-id="${safe(s.user_id)}">Editar</button></article>`).join('')}</div><h3>${edit?'Editar acesso':'Cadastrar acesso'}</h3><form id="staff-form"><label>Nome<input name="name" required maxlength="200" value="${safe(edit?.name || '')}"></label><label>E-mail<input name="email" type="email" required maxlength="254" value="${safe(edit?.email || '')}" ${edit?'readonly':''}></label><label>Perfil<select name="role" ${edit?.protected?'disabled':''}><option value="architect" ${edit?.role==='architect'?'selected':''}>Arquiteta</option><option value="admin" ${edit?.role==='admin'?'selected':''}>Admin</option></select></label><label><input type="checkbox" name="active" ${edit?.active!==false?'checked':''} ${edit?.protected?'disabled':''}> Acesso ativo</label><button class="review-primary" type="submit">Salvar acesso</button>${edit?'<button type="button" data-action="new-staff">Novo cadastro</button>':''}</form>`;
+  }
+  if(kind==='notifications') content = `<p>Nova tentativa recoloca falhas elegíveis na fila para a próxima verificação automática. Envios já aceitos não são repetidos.</p><div class="activity-list">${adminPanel.rows.map(n=>`<article><strong>${safe(n.unit_code)}</strong><span>${safe(({sent:'Aceito pelo provedor',failed:'Falhou',pending:'Na fila',sending:'Em processamento'})[n.status] || n.status)} · ${n.attempts} tentativa(s)</span><small>${safe(formatSessionDate(n.created_at))}${n.last_error?' · '+safe(n.last_error):''}</small>${n.status==='failed' && n.attempts<5?`<button data-action="retry-notification" data-id="${safe(n.id)}">Solicitar nova tentativa</button>`:''}</article>`).join('') || '<p>Nenhum aviso registrado.</p>'}</div>`;
+  return `<div class="review-overlay"><div class="review-modal"><button class="close-review" data-action="close-admin-panel" aria-label="Fechar">×</button><h2>${({customers:'Clientes',staff:'Equipe',notifications:'Avisos de prazo'})[kind]}</h2>${content}</div></div>`;
 }
 async function runWorkflow(operation, success) {
   if (workflowBusy) return;
@@ -624,6 +640,7 @@ function render() {
   if (helpOpen) app.insertAdjacentHTML('beforeend', helpHtml());
   if (managementUnitId) app.insertAdjacentHTML('beforeend', managementHtml());
   if (historyRows) app.insertAdjacentHTML('beforeend', historyHtml());
+  if (adminPanel) app.insertAdjacentHTML('beforeend', adminPanelHtml());
   if (customerFormOpen) app.insertAdjacentHTML('beforeend', customerFormHtml());
   if (unavailableUnitId) app.insertAdjacentHTML('beforeend', unavailableUnitHtml());
   fitCatalogCards();
@@ -697,8 +714,23 @@ function bindEvents() {
     if (action === 'close-management') { managementUnitId = null; render(); }
     if (action === 'history') runWorkflow(async () => { historyRows = await backend.loadHistory(btn.dataset.unitId || null); });
     if (action === 'close-history') { historyRows = null; render(); }
-    if (action === 'new-customer') { customerFormOpen = true; render(); }
+    if (action === 'new-customer') { customerEditingId = null; customerFormOpen = true; render(); }
     if (action === 'close-customer') { customerFormOpen = false; render(); }
+    if (action === 'customers-panel') { adminPanel = {kind:'customers'}; render(); }
+    if (action === 'edit-customer') { customerEditingId=btn.dataset.id; customerFormOpen=true; render(); }
+    if (action === 'toggle-customer') runWorkflow(async()=>{
+      const customer=backend.customers.find(c=>c.id===btn.dataset.id);
+      await backend.onSetCustomerActive(customer.id,!customer.active);
+    },'Status da conta atualizado.');
+    if (action === 'staff-panel') runWorkflow(async()=>{adminPanel={kind:'staff',rows:await backend.loadStaff()};});
+    if (action === 'edit-staff') {adminPanel.edit=adminPanel.rows.find(s=>s.user_id===btn.dataset.id);render();}
+    if (action === 'new-staff') {adminPanel.edit=null;render();}
+    if (action === 'notifications-panel') runWorkflow(async()=>{adminPanel={kind:'notifications',rows:await backend.loadNotifications()};});
+    if (action === 'retry-notification') runWorkflow(async()=>{
+      await backend.onRetryNotification(btn.dataset.id);
+      adminPanel={kind:'notifications',rows:await backend.loadNotifications()};
+    },'Nova tentativa solicitada. A fila será verificada pelo agendamento.');
+    if (action === 'close-admin-panel') {adminPanel=null;render();}
     if (action === 'close-unavailable') closeUnavailableUnit();
   }));
   document.querySelector('#unit-management-form')?.addEventListener('submit', event => {
@@ -715,7 +747,12 @@ function bindEvents() {
   document.querySelector('#customer-form')?.addEventListener('submit', event => {
     event.preventDefault();
     const form = event.currentTarget;
-    runWorkflow(async () => { await backend.onRegisterCustomer(form.elements.name.value, form.elements.email.value); customerFormOpen = false; }, 'Cliente cadastrado. Vincule-o à unidade em Gerenciar.');
+    runWorkflow(async () => { await backend.onRegisterCustomer(form.elements.name.value, form.elements.email.value,form.elements.phone?.value || null,customerEditingId); customerFormOpen = false; }, 'Cadastro salvo. Confira o vínculo da unidade em Gerenciar.');
+  });
+  document.querySelector('#staff-form')?.addEventListener('submit',event=>{
+    event.preventDefault(); const form=event.currentTarget;
+    const body={name:form.elements.name.value,email:form.elements.email.value,role:form.elements.role.value,active:form.elements.active.checked};
+    runWorkflow(async()=>{await backend.onManageStaff(body);adminPanel={kind:'staff',rows:await backend.loadStaff()};},'Acesso da equipe atualizado.');
   });
 
 

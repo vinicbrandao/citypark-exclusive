@@ -33,6 +33,8 @@ try {
   if(!historyRefused)throw new Error('Optimized cleanup accepted historical records.');
   const scenario = psql(database, readFileSync(new URL('./test-official-active-schema-local.sql',import.meta.url),'utf8'));
   if (!scenario.includes('PASS: optimized schema')) throw new Error('Current application scenario did not complete.');
+  const permissions = psql(database, readFileSync(new URL('./test-production-permissions-local.sql',import.meta.url),'utf8'));
+  if (!permissions.includes('PASS: production permissions')) throw new Error('Production permissions scenario did not complete.');
   const result = JSON.parse(psql(database, `select json_build_object(
     'migrations', (select count(*) from supabase_migrations.schema_migrations),
     'tables', (select count(*) from pg_tables where schemaname='public'),

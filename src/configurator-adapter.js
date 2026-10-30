@@ -40,10 +40,10 @@ const formatDeadline = value => value ? new Intl.DateTimeFormat('pt-BR', {
   timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
 }).format(new Date(value)) : 'Sem prazo';
 
-export async function createConfiguratorAdapter({ client, staffRole, onSignOut }) {
+export async function createConfiguratorAdapter({ client, staffRole, onSignOut, permissionsV2 = false }) {
   const rows = {};
   const adapter = {
-    staffRole, onSignOut, units: [], customers: [], modules: [],
+    staffRole, onSignOut, permissionsV2, units: [], customers: [], modules: [],
     canEdit, isOptionAvailable, defaultsForUnit, onValidate, onOpen, refresh,
     onSetActive: (id, active) => mutate('set_unit_active', { p_unit_id: id, p_active: active }),
     onSetDeadline: (id, date) => mutate('set_unit_deadline', { p_unit_id: id, p_closes_at: date }),
@@ -54,19 +54,36 @@ export async function createConfiguratorAdapter({ client, staffRole, onSignOut }
     onManageUnit: (id, customer, date, modules) => mutate('manage_unit', {
       p_unit_id: id, p_customer_id: customer, p_closes_at: date, p_module_deadlines: modules
     }),
-    onRegisterCustomer: async (name, email) => {
-      const result = await client.functions.invoke('admin-customer', { body: { name, email } });
-      if (result.error || result.data?.error) throw new Error(result.data?.error || 'Não foi possível cadastrar o cliente. Confira se o serviço administrativo está disponível.');
+    onRegisterCustomer: async (name, email, phone = null, customerId = null) => {
+      await invoke('admin-customer', { name, email,
+        ...(permissionsV2 ? { phone, customerId, action: customerId ? 'update' : 'create' } : {}) });
       await refresh();
     },
+    onSetCustomerActive: (id, active) => mutate('set_customer_active', {p_customer_id:id,p_active:active}),
+    loadStaff: async () => check(await client.rpc('list_staff_accounts')),
+    onManageStaff: async body => {
+      await invoke('admin-staff', body);
+    },
+    loadNotifications: async () => check(await client.from('deadline_notifications')
+      .select('id,unit_code,status,attempts,last_error,created_at,sent_at').order('created_at',{ascending:false}).limit(100)),
+    onRetryNotification: id => mutate('retry_deadline_notification',{p_id:id}),
     loadHistory
   };
+  async function invoke(name, body) {
+    const result = await client.functions.invoke(name,{body});
+    let message=result.data?.error;
+    if(result.error) {
+      try {message=(await result.error.context.json()).error;} catch { /* No server response body. */ }
+    }
+    if(result.error || message) throw new Error(typeof message==='string' ? message : 'Não foi possível concluir a operação. Confira o serviço administrativo.');
+    return result.data;
+  }
   async function refresh() {
     const queries = {
       units: staffRole
-        ? client.from('units').select('id,code,tower,tower_code,floor_label,termination,typology,area_m2,customization_closes_at,active,customization_status').order('code')
+        ? client.from('units').select('id,code,tower,tower_code,floor_label,termination,typology,area_m2,customization_closes_at,active,customization_status').order('tower_code').order('floor_number').order('termination_code').order('code')
         : client.rpc('list_customer_unit_cards'),
-      customers: client.from('customers').select('id,name,email').order('name'),
+      customers: client.from('customers').select(permissionsV2 ? 'id,name,email,phone,active' : 'id,name,email').order('name'),
       links: client.from('customer_units').select('unit_id,customer_id').eq('active', true).eq('ownership_role', 'owner'),
       assignments: client.from('unit_base_plan_assignments').select('unit_id,base_plan_id'),
       plans: client.from('base_plans').select('id,name,status'),
