@@ -35,6 +35,11 @@ const DATA = {
   }
 };
 
+const PREVIEW_APARTMENT = {
+  id: 'demo-customizer', label: 'Apartamento de demonstração',
+  floor: 'Dados de teste', plantDeadline: 'Sem prazo'
+};
+
 const DEFAULT_STATE = {
   apartmentId: null,
   sidebarCollapsed: false,
@@ -42,23 +47,20 @@ const DEFAULT_STATE = {
   plantGroup: 'social',
   materialGroup: 'counter',
   environment: 'cozinha',
-  socialPlant: null,
-  suitePlant: null,
+  socialPlant: 'social-original',
+  suitePlant: 'suite-standard',
   counter: 'counter-standard',
   stone: 'sao-marco',
   rodamao: 'padrao',
   service: 'service-no',
-  accordions: { plant: true, floor: false, counters: true, fixtures: false, metals: false, extras: false },
-  savedAt: null
+  accordions: { plant: true, floor: false, counters: true, fixtures: false, metals: false, extras: false }
 };
 
 const state = { ...DEFAULT_STATE, accordions: { ...DEFAULT_STATE.accordions } };
 const app = document.querySelector('#app');
-const drafts = new Map();
-let lastSavedUnitId = null;
+let openingVersion = 0;
 let backend = null;
 let mountVersion = 0;
-const savingUnits = new Set();
 let deadlineRefresh = null;
 let layoutObserver = null;
 
@@ -70,12 +72,16 @@ export function clearConfigurator() {
   ++mountVersion;
   backend = null;
   DATA.apartments = [];
-  drafts.clear();
-  savingUnits.clear();
-  lastSavedUnitId = null;
+  ++openingVersion;
   reviewOpen = false;
   helpOpen = false;
-  helpArchitectId = null;
+  managementUnitId = null;
+  historyRows = null;
+  customerFormOpen = false;
+  customerEditingId = null;
+  adminPanel = null;
+  unavailableUnitId = null;
+  workflowBusy = false;
   Object.assign(state, DEFAULT_STATE, { accordions: { ...DEFAULT_STATE.accordions } });
   app.innerHTML = '';
 }
@@ -84,59 +90,60 @@ export function mountConfigurator(options) {
   clearConfigurator();
   backend = options;
   DATA.apartments = options.units;
-  for (const row of options.savedDrafts) {
-    if (DATA.apartments.some(unit => unit.id === row.unit_id)) {
-      drafts.set(row.unit_id, normalizeDraft({ ...row.selections, savedAt: row.updated_at }));
-    }
-  }
-  lastSavedUnitId = [...drafts.entries()].sort((a, b) => (b[1].savedAt || '').localeCompare(a[1].savedAt || ''))[0]?.[0] || null;
   render();
 }
 
-// Only catalog selections belong to a draft; navigation is reset when opening a unit.
-function normalizeDraft(value = {}) {
-  const source = value && typeof value === 'object' ? value : {};
-  const catalogs = {
-    socialPlant: DATA.plant.social, suitePlant: DATA.plant.suite,
+function normalizeSelections(value = {}) {
+  value ||= {};
+  const catalogs = { socialPlant: DATA.plant.social, suitePlant: DATA.plant.suite,
     counter: DATA.materials.counter, stone: DATA.materials.stone,
-    rodamao: DATA.materials.rodamao, service: DATA.materials.service
-  };
-  const draft = {};
-  for (const [key, options] of Object.entries(catalogs)) {
-    draft[key] = options.some(option => option.id === source[key]) ? source[key] : DEFAULT_STATE[key];
-  }
-  draft.savedAt = typeof source.savedAt === 'string' && Number.isFinite(Date.parse(source.savedAt))
-    ? new Date(source.savedAt).toISOString() : null;
-  return draft;
+    rodamao: DATA.materials.rodamao, service: DATA.materials.service };
+  return Object.fromEntries(Object.entries(catalogs).map(([key, options]) =>
+    [key, options.some(option => option.id === value[key]) ? value[key] : DEFAULT_STATE[key]]));
 }
 
-function rememberCurrentDraft() {
-  if (DATA.apartments.some(apt => apt.id === state.apartmentId)) {
-    drafts.set(state.apartmentId, normalizeDraft(state));
+async function selectApartment(apartmentId) {
+  const apartment = DATA.apartments.find(apt => apt.id === apartmentId);
+  if (!apartment) return;
+  if (!backend?.staffRole && apartment.active === false) {
+    openUnavailableUnit(apartmentId); return;
   }
+  const request = ++openingVersion;
+  const version = mountVersion;
+  const defaults = backend?.defaultsForUnit?.(apartmentId);
+  if (defaults && Object.values(defaults).some(value => !value)) {
+    showToast('O catálogo e as opções padrão desta unidade ainda estão em preparação.'); return;
+  }
+  try {
+    await backend?.onOpen?.(apartmentId);
+    if (request !== openingVersion || version !== mountVersion) return;
+    openConfigurator(apartmentId, defaults);
+  } catch (error) { if (version === mountVersion) showToast(error.message || 'Não foi possível abrir a unidade.'); }
 }
 
-function selectApartment(apartmentId) {
-  if (!DATA.apartments.some(apt => apt.id === apartmentId)) return;
-  rememberCurrentDraft();
-  Object.assign(state, DEFAULT_STATE, drafts.get(apartmentId) || normalizeDraft(), {
+function openConfigurator(apartmentId, defaults) {
+  Object.assign(state, DEFAULT_STATE, normalizeSelections(defaults), {
     apartmentId, accordions: { ...DEFAULT_STATE.accordions }
   });
-  reviewOpen = false;
-  helpOpen = false;
-  render();
+  reviewOpen = false; helpOpen = false; render();
+}
+
+function canPreview() {
+  return backend?.allowPreview === true && ['admin', 'architect'].includes(backend.staffRole);
+}
+
+function isPreview() {
+  return canPreview() && state.apartmentId === PREVIEW_APARTMENT.id;
 }
 
 function showApartments() {
-  rememberCurrentDraft();
-  backend?.editAfterSubmit?.clear();
+  ++openingVersion;
   Object.assign(state, DEFAULT_STATE, { accordions: { ...DEFAULT_STATE.accordions } });
-  reviewOpen = false;
-  helpOpen = false;
-  render();
+  reviewOpen = false; helpOpen = false; render();
 }
 
 function currentApartment() {
+  if (isPreview()) return PREVIEW_APARTMENT;
   return DATA.apartments.find(a => a.id === state.apartmentId) || DATA.apartments[0];
 }
 function unitDeadlineClosed(apt = currentApartment()) {
@@ -146,7 +153,7 @@ function scheduleDeadlineRefresh() {
   if (deadlineRefresh != null) clearTimeout(deadlineRefresh);
   deadlineRefresh = null;
   const units = state.apartmentId ? [currentApartment()] : DATA.apartments;
-  const remaining = units.map(apt => Date.parse(apt?.customizationClosesAt) - Date.now())
+  const remaining = units.flatMap(apt => [apt?.customizationClosesAt, ...(apt?.moduleWindows || []).flatMap(w => [w.opens_at, w.closes_at])]).map(date => Date.parse(date) - Date.now())
     .filter(delay => Number.isFinite(delay) && delay > 0);
   if (remaining.length) deadlineRefresh = setTimeout(() => {
     deadlineRefresh = null;
@@ -204,10 +211,10 @@ function totalPrice() {
 }
 function plantComplete() { return Boolean(state.socialPlant && state.suitePlant); }
 function choiceEnabled(key, value) {
-  if (!backend?.canEdit) return true;
+  if (isPreview() || !backend?.canEdit) return true;
   const module = ['socialPlant', 'suitePlant'].includes(key) ? 'planta' : 'bancadas';
   return backend.canEdit(state.apartmentId, module) &&
-    (!backend.isOptionAvailable || backend.isOptionAvailable(state.apartmentId, key, value));
+    (!backend.isOptionAvailable || backend.isOptionAvailable(state.apartmentId, key, value, state));
 }
 function materialLabel(list, id, fallback = '—') { return find(list, id)?.title || fallback; }
 function materialCardMeta(item, key) {
@@ -218,33 +225,8 @@ function materialCardMeta(item, key) {
   return '';
 }
 
-async function saveProgress() {
-  const apartmentId = state.apartmentId;
-  if (!backend || !DATA.apartments.some(apt => apt.id === apartmentId) || savingUnits.has(apartmentId)) return false;
-  const requestVersion = mountVersion;
-  const { savedAt: previousSave, ...selections } = normalizeDraft(state);
-  savingUnits.add(apartmentId);
-  try {
-    const savedAt = await backend.onSave(apartmentId, selections);
-    if (requestVersion !== mountVersion) return;
-    // Preserve any edits made while the save was in flight.
-    if (state.apartmentId === apartmentId) {
-      state.savedAt = savedAt;
-      rememberCurrentDraft();
-    } else {
-      drafts.set(apartmentId, { ...(drafts.get(apartmentId) || selections), savedAt });
-    }
-    lastSavedUnitId = apartmentId;
-    showToast('Progresso salvo na sua unidade.');
-    if (state.apartmentId === apartmentId) render();
-    return true;
-  } catch (error) {
-    if (requestVersion === mountVersion) showToast(error.message || 'Não foi possível salvar. Tente novamente.');
-    return false;
-  } finally {
-    if (requestVersion === mountVersion) savingUnits.delete(apartmentId);
-  }
-}
+
+
 function showToast(text) {
   const old = document.querySelector('.toast'); if (old) old.remove();
   const el = document.createElement('div'); el.className = 'toast'; el.textContent = text;
@@ -260,8 +242,8 @@ function headerHtml() {
     </button>
     ${state.apartmentId ? `<div class="header-unit"><span>${apt.label}</span><small>${apt.floor} · prazo de planta: ${apt.plantDeadline}</small></div>` : '<div></div>'}
     <div class="header-actions">
-      ${backend?.staffRole && state.apartmentId ? `<span class="header-btn">${backend.staffRole === 'admin' ? 'Administrador' : 'Arquiteta'} · atendimento</span>` : ''}
-      ${state.apartmentId ? `<button class="header-btn" data-action="save" ${unitDeadlineClosed() ? 'disabled title="Prazo final encerrado"' : ''}>Salvar progresso</button><button class="header-btn strong" data-action="change-unit">Trocar unidade</button>` : ''}
+      ${isPreview() ? '<span class="header-btn">Prévia · valores ilustrativos</span>' : backend?.staffRole && state.apartmentId ? `<span class="header-btn">${backend.staffRole === 'admin' ? 'Administrador' : 'Arquiteta'} · atendimento</span>` : ''}
+      ${state.apartmentId ? `<button class="header-btn strong" data-action="change-unit">${isPreview() ? 'Voltar às unidades' : 'Trocar unidade'}</button>` : ''}
       ${state.apartmentId ? '<button class="header-btn compact-review" data-action="compact-review">Resumo</button>' : ''}
       <button class="header-btn" data-action="logout">${!state.apartmentId ? 'Voltar ao login' : 'Sair'}</button>
     </div>
@@ -482,6 +464,7 @@ function configuratorHtml() {
 }
 
 function unitModalHtml() {
+  if (backend?.staffRole) return staffUnitsHtml();
   const displayLabel = value => String(value).replace(/^(\d+)([AB])$/, '$1 $2');
   return `<div class="unit-screen unit-selection-screen">
     ${headerHtml()}
@@ -500,19 +483,22 @@ function unitModalHtml() {
             ? `${new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(area)} m²`
             : 'Área a confirmar'];
           const closed = unitDeadlineClosed(apt);
-          return `<article class="apartment-card" data-apartment-id="${safe(apt.id)}" aria-labelledby="apartment-${safe(apt.id)}">
+          const unavailable = apt.active === false;
+          return `<article class="apartment-card${unavailable ? ' apartment-card--unavailable' : ''}" data-apartment-id="${safe(apt.id)}" aria-labelledby="apartment-${safe(apt.id)}" ${unavailable ? `data-unavailable-unit="${safe(apt.id)}" role="button" tabindex="0" aria-describedby="unavailable-${safe(apt.id)}" aria-haspopup="dialog"` : ''}>
             <div class="apartment-image">${apt.situation
               ? `<img src="${safe(apt.situation)}" alt="Planta de localização da unidade ${safe(label)}">`
               : '<div class="apartment-image-placeholder"><span aria-hidden="true">⌂</span><p>Planta em preparação</p></div>'}</div>
             <div class="apartment-card-body">
               <h2 id="apartment-${safe(apt.id)}">${safe(label)}</h2>
               <p class="apartment-details">${metadata.filter(Boolean).map(value => `<span>${safe(value)}</span>`).join('')}</p>
-              <button class="apartment-access" data-unit="${safe(apt.id)}" aria-label="Acessar unidade ${safe(label)}">Acessar unidade <span aria-hidden="true">→</span></button>
+              ${unavailable
+                ? `<span class="apartment-access apartment-unavailable-label" id="unavailable-${safe(apt.id)}">Unidade indisponível <span aria-hidden="true">ⓘ</span></span>`
+                : `<button class="apartment-access" data-unit="${safe(apt.id)}" aria-label="Acessar unidade ${safe(label)}">Acessar unidade <span aria-hidden="true">→</span></button>`}
               <div class="apartment-deadline ${closed ? 'apartment-deadline--closed' : ''}">
                 <span>${closed ? 'Prazo encerrado · somente consulta' : 'Prazo final para alterações'}</span>
                 ${apt.customizationClosesAt
                   ? `<time datetime="${safe(apt.customizationClosesAt)}">${safe(apt.customizationDeadline)}</time>`
-                  : '<strong>A definir</strong>'}
+                  : '<strong>Sem prazo</strong>'}
               </div>
             </div>
           </article>`;
@@ -533,163 +519,119 @@ function reviewHtml() {
       <section><h3>Bancadas</h3><p><span>Configuração</span><b>${materialLabel(DATA.materials.counter, state.counter)}</b></p><p><span>Granito</span><b>${materialLabel(DATA.materials.stone, state.stone)} · ${brl(stone.unitPrice)}/m²</b></p><p><span>Rodamão</span><b>${materialLabel(DATA.materials.rodamao, state.rodamao)}</b></p><p><span>Serviço</span><b>${materialLabel(DATA.materials.service, state.service)}</b></p><p><span>Área total de granito</span><b>${num(pricing.totalArea)} m²</b></p><p><span>Acréscimo de bancadas</span><b>${brl(pricing.additionalCost)}</b></p></section>
     </div>
     <div class="review-total"><span>Valor adicional</span><strong>${brl(totalPrice())}</strong></div>
-    ${proposalWorkflowHtml()}
+    ${sessionWorkflowHtml()}
     <button class="review-primary" data-action="close-review">Voltar ao configurador</button>
   </div></div>`;
 }
 
 let reviewOpen = false;
 let helpOpen = false;
-let helpArchitectId = null;
+let managementUnitId = null;
+let historyRows = null;
+let customerFormOpen = false;
+let customerEditingId = null;
+let adminPanel = null;
+let unavailableUnitId = null;
 let workflowBusy = false;
 const safe = value => String(value ?? '').replace(/[&<>"']/g, char => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
 }[char]));
 
-function proposalWorkflowHtml() {
-  if (!backend?.onSubmit) return '';
-  const proposal =
-    backend.proposals?.[state.apartmentId];
-  const editing =
-    backend.editAfterSubmit.has(
-      state.apartmentId
-    );
-  const reviewed =
-    proposal?.proposalStatus === 'reviewed';
-  const limitReached =
-    proposal?.proposalStatus === 'open' &&
-    proposal.latest_revision >= 4;
-  const finalDeadlineClosed = unitDeadlineClosed();
-  let customerAction = '';
-  if (!backend.staffRole && !finalDeadlineClosed) {
-    if (!proposal) {
-      customerAction =
-        '<button data-action="submit-proposal">Enviar proposta à arquiteta</button>';
-    } else if (reviewed) {
-      customerAction = editing
-        ? '<button data-action="submit-proposal">Enviar nova proposta · envio 1 de 4</button>'
-        : '<button data-action="edit-proposal">Iniciar nova proposta</button>';
-    } else if (!limitReached) {
-      customerAction = editing
-        ? `<button data-action="submit-proposal">Reenviar proposta · envio ${proposal.latest_revision + 1} de 4</button>`
-        : '<button data-action="edit-proposal">Alterar proposta</button>';
-    }
-  }
-
-  return `
-    <section class="exclusive-workflow">
-      <h3>Proposta de alteração</h3>
-      ${finalDeadlineClosed ? '<p>O prazo final desta unidade encerrou. As escolhas estão disponíveis para consulta.</p>' : ''}
-      ${
-        proposal
-          ? `
-            <p>
-              Proposta ${proposal.cycle_number}
-              · Envio ${proposal.latest_revision} de 4
-              · ${safe(proposal.status)}.
-            </p>
-
-            ${
-              proposal.review?.note
-                ? `<p>Parecer: ${safe(proposal.review.note)}</p>`
-                : ''
-            }
-          `
-          : `
-            <p>
-              Depois de conferir as escolhas,
-              envie a proposta para análise da arquiteta.
-            </p>
-          `
-      }
-
-      ${
-        limitReached
-          ? `
-            <p>
-              Os quatro envios deste ciclo foram utilizados.
-              Aguarde o parecer da arquiteta.
-            </p>
-          `
-          : ''
-      }
-
-      ${customerAction}
-      ${
-        backend.staffRole === 'architect' &&
-        proposal &&
-        proposal.proposalStatus === 'open' &&
-        !proposal.review
-          ? `
-            <label for="technical-note">
-              Observação para o cliente
-            </label>
-
-            <textarea
-              id="technical-note"
-              rows="3"
-            ></textarea>
-
-            <div class="exclusive-workflow-actions">
-
-              <button data-action="review-approved">
-                Confirmar viabilidade
-              </button>
-
-              <button data-action="review-changes">
-                Solicitar alteração
-              </button>
-
-            </div>
-
-            <small>
-              O parecer técnico não é a aprovação final.
-            </small>
-          `
-          : ''
-      }
-      <p>
-        <button data-action="help">
-          ${
-            backend.staffRole
-              ? 'Ver atendimento'
-              : 'Pedir ajuda à arquiteta'
-          }
-        </button>
-      </p>
-    </section>
-  `;
+function openUnavailableUnit(unitId) {
+  unavailableUnitId = unitId;
+  render();
+  document.querySelector('[data-action="close-unavailable"]')?.focus();
+}
+function closeUnavailableUnit() {
+  const unitId = unavailableUnitId;
+  unavailableUnitId = null;
+  render();
+  document.querySelector(`[data-unavailable-unit="${unitId}"]`)?.focus();
+}
+function unavailableUnitHtml() {
+  const unit = DATA.apartments.find(apt => apt.id === unavailableUnitId);
+  const completed = unit.customizationStatus === 'completed';
+  return `<div class="review-overlay unavailable-unit-overlay"><section class="review-modal unavailable-unit-modal" role="dialog" aria-modal="true" aria-labelledby="unavailable-unit-title" aria-describedby="unavailable-unit-description">
+    <button class="close-review" data-action="close-unavailable" aria-label="Fechar aviso">×</button>
+    <span class="review-kicker">UNIDADE ${safe(unit.label)}</span>
+    <h2 id="unavailable-unit-title">${completed ? 'Personalização concluída' : 'Unidade indisponível'}</h2>
+    <p id="unavailable-unit-description">${completed
+      ? 'A personalização desta unidade foi concluída. Ela está inativa e indisponível para novas alterações.'
+      : 'O acesso à personalização desta unidade está temporariamente indisponível.'}</p>
+    <p>Para mais informações${completed ? ' ou para solicitar a reabertura' : ''}, entre em contato com a equipe do Exclusive.</p>
+    <button class="review-primary" data-action="close-unavailable">Entendi</button>
+  </section></div>`;
 }
 
+function sessionWorkflowHtml() {
+  return '<section class="exclusive-workflow"><h3>Sessão de personalização</h3><p>As escolhas desta sessão serão descartadas ao sair da unidade. A geração de contratos será disponibilizada em uma próxima etapa.</p></section>';
+}
 function helpHtml() {
-  const unitId = state.apartmentId;
-  const active = backend?.help?.[unitId];
-  const architects = backend?.architects?.[unitId] || [];
-  const authorized = architects.find(item => item.user_id === (active?.architect_user_id || helpArchitectId))?.authorized;
-  return `<div class="review-overlay"><div class="review-modal exclusive-help-modal">
-    <button class="close-review" data-action="close-help">×</button>
-    <span class="review-kicker">ATENDIMENTO</span><h2>Ajuda da arquiteta</h2>
-    ${active ? `<p>Pedido ${active.status === 'requested' ? 'enviado; aguardando aceite' : 'em atendimento'}.</p>
-      ${backend.staffRole === 'architect' ? `<button class="review-primary" data-action="${active.status === 'requested' ? 'accept-help' : 'resolve-help'}">${active.status === 'requested' ? 'Aceitar pedido' : 'Concluir atendimento'}</button>`
-        : '<button class="review-primary" data-action="cancel-help">Cancelar pedido</button>'}`
-      : backend.staffRole ? '<p>Nenhum pedido de ajuda aberto nesta unidade.</p>'
-        : architects.length ? `<p>Escolha a arquiteta designada para esta unidade.</p><label for="help-architect">Arquiteta</label>
-          <select id="help-architect">${architects.map(item => `<option value="${item.user_id}" ${item.user_id === helpArchitectId ? 'selected' : ''}>${safe(item.name)}${item.authorized ? ' · autorizada' : ''}</option>`).join('')}</select>
-          <button class="review-primary" data-action="request-help">Pedir ajuda</button>`
-        : '<p>Não há arquiteta designada para esta unidade no momento.</p>'}
-    ${!backend.staffRole && authorized ? '<button class="review-primary" data-action="revoke-architect">Revogar autorização da arquiteta</button>' : ''}
-    <small>O pedido não envia aviso externo. A arquiteta o verá ao acessar esta unidade. Cancelar o pedido não revoga a autorização de acesso.</small>
-    <button class="review-primary" data-action="close-help">Voltar ao configurador</button>
-  </div></div>`;
+  return '<div class="review-overlay"><div class="review-modal exclusive-help-modal"><button class="close-review" data-action="close-help" aria-label="Fechar">×</button><h2>Personalização</h2><p>Escolha as opções permitidas para sua unidade e confira o resumo. Ao sair, as escolhas voltam ao padrão. Para dúvidas sobre o catálogo ou prazos, entre em contato com a equipe do Exclusive.</p></div></div>';
 }
-
+function staffUnitsHtml() {
+  return `<div class="unit-screen unit-selection-screen">${headerHtml()}<main class="staff-units">
+    <div class="staff-heading"><div><p class="apartment-profile">${backend.staffRole === 'admin' ? 'Administrador' : 'Arquiteta'}</p><h1>Unidades do CityPark</h1></div><div class="unit-actions">${canPreview() ? '<button data-action="open-customizer-preview">Prévia da personalização</button>' : ''}${backend.staffRole === 'admin' ? `<button data-action="new-customer">Cadastrar cliente</button>${backend.permissionsV2 ? '<button data-action="customers-panel">Clientes</button><button data-action="staff-panel">Equipe</button><button data-action="notifications-panel">Avisos</button>' : ''}` : ''}<button class="header-btn" data-action="history">Histórico geral</button></div></div>
+    <p class="session-notice">As personalizações ficam apenas na sessão aberta. Sair da unidade descarta as escolhas.</p>
+    <div class="unit-table-scroll"><table class="unit-table"><thead><tr><th>Unidade / planta-base</th><th>Cliente</th><th>Status</th><th>Prazo geral</th><th>Módulos</th><th>Ações</th></tr></thead><tbody>
+    ${DATA.apartments.map(apt => `<tr><td><strong>${safe(apt.label)}</strong><small>${safe(apt.tower)} · ${safe(apt.floor)}</small><small>${safe(apt.basePlanName)}</small></td>
+      <td>${safe(apt.customer?.name || 'Sem cliente vinculado')}<small>${safe(apt.customer?.email)}</small>${backend.permissionsV2 ? `<small>${safe(apt.customer?.phone || 'Telefone não informado')}</small>${apt.customer?.active === false ? '<small>Conta inativa</small>' : ''}` : ''}</td>
+      <td><span class="unit-status ${apt.active ? 'is-active' : ''}">${apt.active ? 'Ativa' : 'Inativa'}</span><small>${apt.customizationStatus === 'completed' ? 'Concluída' : 'Pendente'}</small></td>
+      <td>${safe(apt.customizationDeadline || 'Sem prazo')}</td>
+      <td>${(backend.modules || []).map(m => `<small>${safe(m.name)}: ${safe(formatSessionDate(apt.moduleWindows?.find(w => w.module_code === m.code)?.closes_at))}</small>`).join('')}</td>
+      <td><div class="unit-actions"><button data-unit="${safe(apt.id)}">Acessar</button><button data-action="toggle-unit" data-unit-id="${safe(apt.id)}">${apt.active ? 'Inativar' : 'Ativar'}</button>
+      <button data-action="manage-unit" data-unit-id="${safe(apt.id)}">Gerenciar</button><button data-action="history" data-unit-id="${safe(apt.id)}">Histórico</button></div></td></tr>`).join('')}
+    </tbody></table></div></main></div>`;
+}
+function formatSessionDate(value) {
+  return value ? new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Sao_Paulo' }).format(new Date(value)) : 'Sem prazo';
+}
+function localDateInput(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0,16);
+}
+function managementHtml() {
+  const apt = DATA.apartments.find(unit => unit.id === managementUnitId);
+  const managesDeadlines = backend.staffRole === 'admin';
+  return `<div class="review-overlay"><div class="review-modal"><button class="close-review" data-action="close-management" aria-label="Fechar">×</button><h2>Gerenciar ${safe(apt.label)}</h2>
+    <form id="unit-management-form"><label>Cliente<select name="customer"><option value="">Sem cliente</option>${backend.customers.map(c => `<option value="${safe(c.id)}" ${c.id === apt.customerId ? 'selected' : ''}>${safe(c.name)} · ${safe(c.email)}</option>`).join('')}</select></label>
+    ${managesDeadlines ? `<label>Prazo geral<input type="datetime-local" name="deadline" value="${localDateInput(apt.customizationClosesAt)}"></label>
+    ${backend.modules.map(m => `<label>Prazo de ${safe(m.name)}<input type="datetime-local" data-module-deadline="${safe(m.code)}" value="${localDateInput(apt.moduleWindows?.find(w => w.module_code === m.code)?.closes_at)}"></label>`).join('')}
+    <p class="session-notice">Datas no horário do dispositivo. Campo vazio remove o prazo e libera alterações sem data limite.</p>` : ''}
+    <button class="review-primary" type="submit">${managesDeadlines ? 'Salvar cadastro e prazos' : 'Salvar vínculo'}</button></form>
+    ${apt.commercialReviewRevision ? `<p class="session-notice">Revenda identificada. Confira o cliente vinculado antes de liberar a personalização.</p>
+      ${apt.customerId ? '<button type="button" data-action="confirm-commercial-owner">Confirmar proprietário vinculado</button>' : ''}` : ''}
+    </div></div>`;
+}
+function historyHtml() {
+  const labels = { unit_first_opened: 'Acessou a unidade pela primeira vez', unit_opened: 'Acessou a unidade', unit_status_changed: 'Alterou o status', unit_deadline_changed: 'Alterou o prazo geral', module_deadline_changed: 'Alterou o prazo do módulo', unit_customer_changed: 'Alterou o cliente vinculado', commercial_owner_confirmed: 'Confirmou o proprietário após revenda', customer_registered: 'Cadastrou ou atualizou um cliente', customer_contact_changed: 'Atualizou o contato do cliente', customer_email_changed: 'Alterou o e-mail do cliente', customer_status_changed: 'Alterou o acesso do cliente', staff_access_changed: 'Alterou um acesso da equipe', deadline_retry_requested: 'Solicitou nova tentativa de aviso' };
+  return `<div class="review-overlay"><div class="review-modal"><button class="close-review" data-action="close-history" aria-label="Fechar">×</button><h2>Histórico de atividades</h2><div class="activity-list">${historyRows.length ? historyRows.map(row => `<article><strong>${safe(row.actor_name)}</strong><span>${safe(labels[row.action] || row.action)} · ${safe(DATA.apartments.find(u => u.id === row.unit_id)?.label)}</span><small>${safe(formatSessionDate(row.created_at))}${row.details?.module_code ? ' · ' + safe(row.details.module_code) : ''}${row.action === 'unit_status_changed' ? ' · ' + (row.details.active ? 'Ativa' : 'Inativa') : ''}</small></article>`).join('') : '<p>Nenhuma atividade registrada.</p>'}</div></div></div>`;
+}
+function customerFormHtml() {
+  const customer = backend.customers.find(c=>c.id===customerEditingId);
+  return `<div class="review-overlay"><div class="review-modal"><button class="close-review" data-action="close-customer" aria-label="Fechar">×</button><h2>${customer ? 'Editar cliente' : 'Cadastrar cliente'}</h2><form id="customer-form"><label>Nome<input name="name" required maxlength="200" autocomplete="name" value="${safe(customer?.name || '')}"></label><label>E-mail da conta<input name="email" type="email" required maxlength="254" autocomplete="email" value="${safe(customer?.email || '')}"></label>${backend.permissionsV2 ? `<label>Telefone<input name="phone" type="tel" maxlength="40" autocomplete="tel" value="${safe(customer?.phone || '')}"></label>` : ''}<p class="session-notice">${customer ? 'A troca de e-mail altera o endereço usado para entrar e recuperar a senha.' : 'O cliente definirá a senha em Primeiro acesso. Para atualizar uma conta existente, informe o mesmo e-mail.'}</p><button type="submit" class="review-primary">Salvar</button></form></div></div>`;
+}
+function adminPanelHtml() {
+  const kind = adminPanel.kind;
+  let content = '';
+  if(kind==='customers') content = `<p>Desativar a conta bloqueia todas as suas unidades e preserva os dados.</p><div class="activity-list">${backend.customers.map(c=>`<article><strong>${safe(c.name)}</strong><span>${safe(c.email)} · ${safe(c.phone || 'Telefone não informado')} · ${c.active ? 'Ativa' : 'Inativa'}</span><div class="unit-actions"><button data-action="edit-customer" data-id="${safe(c.id)}">Editar</button><button data-action="toggle-customer" data-id="${safe(c.id)}">${c.active ? 'Desativar conta' : 'Ativar conta'}</button></div></article>`).join('') || '<p>Nenhum cliente cadastrado.</p>'}</div>`;
+  if(kind==='staff') {
+    const edit = adminPanel.edit;
+    content = `<p>Revogar acesso preserva o histórico. O Admin principal não pode ser desativado ou rebaixado.</p><div class="activity-list">${adminPanel.rows.map(s=>`<article><strong>${safe(s.name)}</strong><span>${safe(s.email)} · ${s.role==='admin'?'Admin':'Arquiteta'} · ${s.active?'Ativo':'Inativo'}${s.protected?' · Principal':''}</span><button data-action="edit-staff" data-id="${safe(s.user_id)}">Editar</button></article>`).join('')}</div><h3>${edit?'Editar acesso':'Cadastrar acesso'}</h3><form id="staff-form"><label>Nome<input name="name" required maxlength="200" value="${safe(edit?.name || '')}"></label><label>E-mail<input name="email" type="email" required maxlength="254" value="${safe(edit?.email || '')}" ${edit?'readonly':''}></label><label>Perfil<select name="role" ${edit?.protected?'disabled':''}><option value="architect" ${edit?.role==='architect'?'selected':''}>Arquiteta</option><option value="admin" ${edit?.role==='admin'?'selected':''}>Admin</option></select></label><label><input type="checkbox" name="active" ${edit?.active!==false?'checked':''} ${edit?.protected?'disabled':''}> Acesso ativo</label><button class="review-primary" type="submit">Salvar acesso</button>${edit?'<button type="button" data-action="new-staff">Novo cadastro</button>':''}</form>`;
+  }
+  if(kind==='notifications') content = `<p>Nova tentativa recoloca falhas elegíveis na fila para a próxima verificação automática. Envios já aceitos não são repetidos.</p><div class="activity-list">${adminPanel.rows.map(n=>`<article><strong>${safe(n.unit_code)}</strong><span>${safe(({sent:'Aceito pelo provedor',failed:'Falhou',pending:'Na fila',sending:'Em processamento'})[n.status] || n.status)} · ${n.attempts} tentativa(s)</span><small>${safe(formatSessionDate(n.created_at))}${n.last_error?' · '+safe(n.last_error):''}</small>${n.status==='failed' && n.attempts<5?`<button data-action="retry-notification" data-id="${safe(n.id)}">Solicitar nova tentativa</button>`:''}</article>`).join('') || '<p>Nenhum aviso registrado.</p>'}</div>`;
+  return `<div class="review-overlay"><div class="review-modal"><button class="close-review" data-action="close-admin-panel" aria-label="Fechar">×</button><h2>${({customers:'Clientes',staff:'Equipe',notifications:'Avisos de prazo'})[kind]}</h2>${content}</div></div>`;
+}
 async function runWorkflow(operation, success) {
   if (workflowBusy) return;
+  const version = mountVersion;
   workflowBusy = true;
-  try { await operation(); showToast(success); render(); }
-  catch (error) { showToast(error.message || 'Não foi possível concluir. Tente novamente.'); }
-  finally { workflowBusy = false; }
+  try { await operation(); if (version !== mountVersion) return; DATA.apartments = backend.units; if (success) showToast(success); render(); }
+  catch (error) { if (version === mountVersion) showToast(error.message || 'Não foi possível concluir. Tente novamente.'); }
+  finally { if (version === mountVersion) workflowBusy = false; }
 }
+
 function fitCatalogCards() {
   document.querySelectorAll('.plant-cards .catalog-card, .material-cards .catalog-card').forEach(card => {
     const copy = card.querySelector('.card-copy');
@@ -719,6 +661,11 @@ function render() {
   app.innerHTML = state.apartmentId ? configuratorHtml() : unitModalHtml();
   if (reviewOpen) app.insertAdjacentHTML('beforeend', reviewHtml());
   if (helpOpen) app.insertAdjacentHTML('beforeend', helpHtml());
+  if (managementUnitId) app.insertAdjacentHTML('beforeend', managementHtml());
+  if (historyRows) app.insertAdjacentHTML('beforeend', historyHtml());
+  if (adminPanel) app.insertAdjacentHTML('beforeend', adminPanelHtml());
+  if (customerFormOpen) app.insertAdjacentHTML('beforeend', customerFormHtml());
+  if (unavailableUnitId) app.insertAdjacentHTML('beforeend', unavailableUnitHtml());
   fitCatalogCards();
   layoutObserver?.disconnect();
   const screen = document.querySelector('.configurator-screen');
@@ -735,6 +682,27 @@ function render() {
 }
 
 function bindEvents() {
+  document.querySelectorAll('[data-unavailable-unit]').forEach(card => {
+    card.addEventListener('click', () => openUnavailableUnit(card.dataset.unavailableUnit));
+    card.addEventListener('keydown', event => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault(); openUnavailableUnit(card.dataset.unavailableUnit);
+      }
+    });
+  });
+  const unavailableOverlay = document.querySelector('.unavailable-unit-overlay');
+  unavailableOverlay?.addEventListener('click', event => {
+    if (event.target === unavailableOverlay) closeUnavailableUnit();
+  });
+  unavailableOverlay?.addEventListener('keydown', event => {
+    if (event.key === 'Escape') { event.preventDefault(); closeUnavailableUnit(); }
+    if (event.key === 'Tab') {
+      const buttons = unavailableOverlay.querySelectorAll('button');
+      const first = buttons[0], last = buttons[buttons.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    }
+  });
   document.querySelectorAll('[data-unit]').forEach(btn => btn.addEventListener('click', () => {
     selectApartment(btn.dataset.unit);
   }));
@@ -745,42 +713,89 @@ function bindEvents() {
       render();
       document.querySelector('[data-action="toggle-sidebar"]')?.focus({ preventScroll: true });
     }
+    if (action === 'open-customizer-preview' && canPreview()) {
+      ++openingVersion;
+      openConfigurator(PREVIEW_APARTMENT.id);
+    }
     if (action === 'logout') backend?.onSignOut();
     if (action === 'home' || action === 'change-unit') showApartments();
-    if (action === 'save') saveProgress();
-    if (action === 'review' || action === 'compact-review') { reviewOpen = true; render(); }
+    if (action === 'review' || action === 'compact-review') {
+      const unitId = state.apartmentId;
+      const choices = normalizeSelections(state);
+      const opening = openingVersion;
+      runWorkflow(async () => {
+        if (!isPreview()) await backend?.onValidate?.(unitId, choices);
+        if (opening !== openingVersion || unitId !== state.apartmentId) return;
+        if (JSON.stringify(choices) !== JSON.stringify(normalizeSelections(state))) throw new Error('As escolhas mudaram. Revise novamente.');
+        reviewOpen = true;
+      });
+    }
     if (action === 'close-review') { reviewOpen = false; render(); }
-    if (action === 'resume') selectApartment(lastSavedUnitId);
-    if (action === 'help') {
-      reviewOpen = false; helpOpen = true; render();
-      backend?.loadArchitects?.(state.apartmentId).then(architects => {
-        helpArchitectId = architects[0]?.user_id || null; if (helpOpen) render();
-      }).catch(error => showToast(error.message || 'Não foi possível carregar as arquitetas.'));
-    }
+    if (action === 'help') { helpOpen = true; render(); }
     if (action === 'close-help') { helpOpen = false; render(); }
-    if (action === 'submit-proposal') runWorkflow(async () => {
-      if (!await saveProgress()) throw new Error('Salve as escolhas antes de enviar.');
-      await backend.onSubmit(state.apartmentId);
-    }, 'Proposta enviada à arquiteta. A equipe retornará assim que possível.');
-    if (action === 'edit-proposal') {
-      try {
-        backend.onEditProposal(state.apartmentId); reviewOpen = false; render();
-        showToast('Você pode alterar os módulos ainda dentro do prazo.');
-      } catch (error) { showToast(error.message || 'Não foi possível abrir a edição.'); }
+    if (action === 'toggle-unit') {
+      const unit = DATA.apartments.find(u => u.id === btn.dataset.unitId);
+      runWorkflow(() => backend.onSetActive(unit.id, !unit.active), 'Status da unidade atualizado.');
     }
-    if (action === 'request-help') runWorkflow(() => backend.onRequestHelp(state.apartmentId,
-      document.querySelector('#help-architect')?.value || helpArchitectId), 'Pedido de ajuda enviado.');
-    if (action === 'cancel-help') runWorkflow(() => backend.onCancelHelp(state.apartmentId), 'Pedido de ajuda cancelado.');
-    if (action === 'revoke-architect') runWorkflow(() => backend.onRevokeArchitect(state.apartmentId,
-      backend.help?.[state.apartmentId]?.architect_user_id || helpArchitectId), 'Autorização da arquiteta revogada.');
-    if (action === 'accept-help') runWorkflow(() => backend.onAcceptHelp(state.apartmentId), 'Pedido de ajuda aceito.');
-    if (action === 'resolve-help') runWorkflow(() => backend.onResolveHelp(state.apartmentId), 'Atendimento concluído.');
-    if (action === 'review-approved' || action === 'review-changes') {
-      const note = document.querySelector('#technical-note')?.value.trim() || null;
-      runWorkflow(() => backend.onReview(state.apartmentId,
-        action === 'review-approved' ? 'approved' : 'changes_requested', note), 'Parecer técnico registrado.');
+    if (action === 'manage-unit') { managementUnitId = btn.dataset.unitId; render(); }
+    if (action === 'confirm-commercial-owner') {
+      const unit = DATA.apartments.find(item => item.id === managementUnitId);
+      const customer = backend.customers.find(item => item.id === unit.customerId);
+      if (!customer || !window.confirm(`Confirmar ${customer.name} como proprietário da unidade ${unit.label}?`)) return;
+      runWorkflow(() => backend.onConfirmCommercialOwner(unit.id, customer.id, unit.commercialReviewRevision),
+        'Proprietário confirmado.');
     }
+    if (action === 'close-management') { managementUnitId = null; render(); }
+    if (action === 'history') runWorkflow(async () => { historyRows = await backend.loadHistory(btn.dataset.unitId || null); });
+    if (action === 'close-history') { historyRows = null; render(); }
+    if (action === 'new-customer') { customerEditingId = null; customerFormOpen = true; render(); }
+    if (action === 'close-customer') { customerFormOpen = false; render(); }
+    if (action === 'customers-panel') { adminPanel = {kind:'customers'}; render(); }
+    if (action === 'edit-customer') { customerEditingId=btn.dataset.id; customerFormOpen=true; render(); }
+    if (action === 'toggle-customer') runWorkflow(async()=>{
+      const customer=backend.customers.find(c=>c.id===btn.dataset.id);
+      await backend.onSetCustomerActive(customer.id,!customer.active);
+    },'Status da conta atualizado.');
+    if (action === 'staff-panel') runWorkflow(async()=>{adminPanel={kind:'staff',rows:await backend.loadStaff()};});
+    if (action === 'edit-staff') {adminPanel.edit=adminPanel.rows.find(s=>s.user_id===btn.dataset.id);render();}
+    if (action === 'new-staff') {adminPanel.edit=null;render();}
+    if (action === 'notifications-panel') runWorkflow(async()=>{adminPanel={kind:'notifications',rows:await backend.loadNotifications()};});
+    if (action === 'retry-notification') runWorkflow(async()=>{
+      await backend.onRetryNotification(btn.dataset.id);
+      adminPanel={kind:'notifications',rows:await backend.loadNotifications()};
+    },'Nova tentativa solicitada. A fila será verificada pelo agendamento.');
+    if (action === 'close-admin-panel') {adminPanel=null;render();}
+    if (action === 'close-unavailable') closeUnavailableUnit();
   }));
+  document.querySelector('#unit-management-form')?.addEventListener('submit', event => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const customerId = form.elements.customer.value || null;
+    const managesDeadlines = backend.staffRole === 'admin';
+    runWorkflow(async () => {
+      if (managesDeadlines) {
+        const iso = value => value ? new Date(value).toISOString() : null;
+        await backend.onManageUnit(managementUnitId, customerId,
+          iso(form.elements.deadline.value), Object.fromEntries([...form.querySelectorAll('[data-module-deadline]')]
+            .map(input => [input.dataset.moduleDeadline, iso(input.value)])));
+      } else {
+        await backend.onSetCustomer(managementUnitId, customerId);
+      }
+      managementUnitId = null;
+    }, managesDeadlines ? 'Cadastro e prazos atualizados.' : 'Vínculo atualizado.');
+  });
+  document.querySelector('#customer-form')?.addEventListener('submit', event => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    runWorkflow(async () => { await backend.onRegisterCustomer(form.elements.name.value, form.elements.email.value,form.elements.phone?.value || null,customerEditingId); customerFormOpen = false; }, 'Cadastro salvo. Confira o vínculo da unidade em Gerenciar.');
+  });
+  document.querySelector('#staff-form')?.addEventListener('submit',event=>{
+    event.preventDefault(); const form=event.currentTarget;
+    const body={name:form.elements.name.value,email:form.elements.email.value,role:form.elements.role.value,active:form.elements.active.checked};
+    runWorkflow(async()=>{await backend.onManageStaff(body);adminPanel={kind:'staff',rows:await backend.loadStaff()};},'Acesso da equipe atualizado.');
+  });
+
+
   document.querySelectorAll('[data-nav]').forEach(btn => btn.addEventListener('click', () => {
     const nav = btn.dataset.nav;
     if (nav === 'plant') { state.module = 'plant'; render(); }

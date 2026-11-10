@@ -134,7 +134,7 @@ const ownerships = [
     externalRef: 'VINC-TESTE-004',
   },
 
-  // Unidade 1401A possui proprietário e coproprietário.
+  // Unidade 1401A possui uma única conta proprietária.
   {
     customerId: customers[3].customerId,
     unitId: units[4].id,
@@ -142,13 +142,7 @@ const ownerships = [
     purchaseDate: '2026-07-12',
     externalRef: 'VINC-TESTE-005',
   },
-  {
-    customerId: customers[4].customerId,
-    unitId: units[4].id,
-    role: 'co_owner',
-    purchaseDate: '2026-07-12',
-    externalRef: 'VINC-TESTE-006',
-  },
+
 ];
 
 const existingUsers = check(
@@ -226,5 +220,5 @@ console.log('cliente.a@example.test -> 1209A');
 console.log('cliente.b@example.test -> 1210A');
 console.log('cliente.c@example.test -> 1301A e 1302A');
 console.log('cliente.d@example.test -> 1401A (owner)');
-console.log('cliente.e@example.test -> 1401A (co_owner)');
+console.log('cliente.e@example.test permanece sem unidade vinculada.');
 console.log('Nenhum e-mail real foi enviado.');

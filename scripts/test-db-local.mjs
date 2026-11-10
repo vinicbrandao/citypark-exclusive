@@ -2,10 +2,8 @@ import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 
 const cases = [
-  ['Escolhas por módulo', 'test-module-choices-local.sql'],
-  ['Pedido de ajuda', 'test-architect-assistance-local.sql'],
-  ['Proposta e revisões', 'test-unit-proposals-local.sql'],
-  ['Prazo final da unidade', 'test-unit-deadline-local.sql'],
+  ['Sessões, acesso e prazos', 'test-session-requirements-local.sql'],
+  ['Cadastro e lembretes', 'test-customer-reminders-local.sql'],
 ];
 
 for (const [label, filename] of cases) {

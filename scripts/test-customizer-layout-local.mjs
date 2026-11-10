@@ -99,7 +99,7 @@ async function mount(page, staffRole = null) {
     window.layoutSaves = [];
     mountConfigurator({
       units: ['1209A', '1305B'].map(id => ({ id, label: id, tower: 'Torre Liberty', floor: '12º andar', type: '3 Quartos', termination: '09A', plantDeadline: 'A definir' })),
-      savedDrafts: [], staffRole,
+      modules: [], customers: [], staffRole,
       onSave: async (id, selections) => { window.layoutSaves.push({ id, selections }); return new Date().toISOString(); }
     });
   }, staffRole);
@@ -167,12 +167,8 @@ try {
   await page.locator('[data-material-group="stone"]').click();
   await page.locator('[data-value="bellagio"]').click();
   await previewFits(page);
-  await page.locator('[data-action="save"]').click();
-  const saved = await page.evaluate(() => window.layoutSaves);
-  assert.equal(saved.length, 1);
-  assert.equal(saved[0].selections.stone, 'bellagio');
-  assert.equal(saved[0].selections.socialPlant, 'social-standard');
-  assert.equal('sidebarCollapsed' in saved[0].selections, false);
+  assert.equal(await page.locator('[data-action="save"]').count(), 0);
+  assert.equal(await page.locator('[data-value="bellagio"].selected').count(), 1);
   await page.screenshot({ path: resolve('outputs/qa/customizer-materials.png') });
   await page.getByRole('button', { name: 'Expandir menu lateral', exact: true }).press('Enter');
   assert.equal(await page.locator('.sidebar-toggle').getAttribute('aria-expanded'), 'true');
@@ -204,7 +200,7 @@ try {
   await page.locator('[data-plant-group="suite"]').click();
   await page.locator('[data-value="suite-standard"]').click();
   await page.locator('[data-plant-group="social"]').click();
-  console.log('OK: collapsed navigation, focus/keyboard, selections, draft payload, review and unit reset');
+  console.log('OK: collapsed navigation, focus/keyboard, session selections, review and unit reset');
 
   // Effective CSS viewports corresponding to browser zoom on a 1366 x 650 display.
   for (const [width, height, label] of [[1437, 678, 'wireframe'], [1920, 1080, 'large'], [1366, 650, '100'], [1093, 520, '125'], [911, 433, '150'], [683, 325, '200'], [390, 844, 'mobile']]) {

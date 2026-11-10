@@ -59,11 +59,13 @@ const groupDefs = [
     ] }
 ];
 const optionIds = new Map();
+const groupIds = new Map();
 for (const definition of groupDefs) {
   const group = check(await admin.from('customization_groups').upsert({
     code: definition.code, name: definition.name, module_code: definition.module_code,
     sort_order: definition.sort_order, status: 'active', required_for_submission: true
   }, { onConflict: 'code' }).select('id').single());
+  groupIds.set(definition.code, group.id);
   for (const [code, name, description] of definition.options) {
     const option = check(await admin.from('customization_options').upsert({
       group_id: group.id, code, name, description, status: 'active'
@@ -94,21 +96,20 @@ for (const entry of assignments) {
   ));
 }
 
-const opensAt = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-const closesAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+for (const base_plan_id of planIds.values()) {
+  check(await admin.from('base_plan_option_defaults').upsert(groupDefs.map(g => ({
+    base_plan_id, group_id: groupIds.get(g.code), option_id: optionIds.get(g.code + ':' + g.options[0][0])
+  })), { onConflict: 'base_plan_id,group_id' }));
+}
+
 // Explicit demonstration metadata; never infer official areas from a unit code.
 const demoAreas = { '1209A': 99.90 };
 for (const unitCode of assignments.flatMap(entry => entry.units)) {
   check(await admin.from('units').update({
-    customization_closes_at: closesAt,
+    customization_closes_at: null,
     ...(demoAreas[unitCode] ? { area_m2: demoAreas[unitCode] } : {})
   }).eq('id', byCode.get(unitCode).id));
-  for (const module_code of ['planta', 'bancadas']) {
-    check(await admin.from('unit_module_windows').upsert({
-      unit_id: byCode.get(unitCode).id, module_code,
-      opens_at: opensAt, closes_at: closesAt, status: 'active'
-    }, { onConflict: 'unit_id,module_code' }));
-  }
+  check(await admin.from('unit_module_windows').delete().eq('unit_id', byCode.get(unitCode).id));
 }
 
 const users = check(await admin.auth.admin.listUsers({ perPage: 1000 })).users;
@@ -124,6 +125,6 @@ for (const email of demoEmails) {
 }
 
 console.log('Catálogo, plantas, opções e prazos de DEMONSTRAÇÃO cadastrados apenas no Supabase local.');
-console.log('Teste com cliente.a@example.test (1209A), cliente.b@example.test (1210A), cliente.d@example.test e cliente.e@example.test (1401A), e architect.1@example.test.');
+console.log('Teste com cliente.a@example.test (1209A), cliente.b@example.test (1210A), cliente.d@example.test (1401A), e architect.1@example.test.');
 console.log(`Senha das contas de teste: ${demoPassword}`);
 console.log('Nenhum dado oficial foi cadastrado.');

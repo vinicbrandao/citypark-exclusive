@@ -6,6 +6,7 @@ import '../styles.css';
 const root = document.querySelector('#app');
 const url = import.meta.env.VITE_SUPABASE_URL;
 const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+const localEmailPreview = import.meta.env.DEV && import.meta.env.VITE_AUTH_EMAIL_DELIVERY === 'local';
 let client;
 let generation = 0;
 let currentUserId = null;
@@ -50,7 +51,7 @@ function showLogin(message = '') {
     ${pendingEmail ? '<label for="code">Código recebido por e-mail</label><input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" minlength="6" required autofocus>' : loginMode === 'password' ? '<label for="password">Senha</label><input id="password" type="password" autocomplete="current-password" required>' : ''}
     <button class="auth-primary" ${busy ? 'disabled' : ''}>${busy ? 'Aguarde…' : pendingEmail ? 'Verificar código' : loginMode === 'password' ? 'Entrar' : 'Receber código'}</button></form>
     ${pendingEmail ? `<button class="auth-link" id="resend" ${busy ? 'disabled' : ''}>Reenviar código</button><button class="auth-link" id="change-email" ${busy ? 'disabled' : ''}>Usar outro e-mail</button>` : ''}
-    <button class="auth-link" id="login-mode" ${busy ? 'disabled' : ''}>${loginMode === 'password' ? 'Primeiro acesso / Esqueci minha senha' : 'Voltar para e-mail e senha'}</button><p class="auth-message" role="status">${escapeHtml(message)}</p><small>O acesso é liberado pela equipe do Exclusive. Caso seu e-mail tenha mudado, solicite a atualização do cadastro.</small>`);
+    <button class="auth-link" id="login-mode" ${busy ? 'disabled' : ''}>${loginMode === 'password' ? 'Primeiro acesso / Esqueci minha senha' : 'Voltar para e-mail e senha'}</button><p class="auth-message" role="status">${escapeHtml(message)}</p>${localEmailPreview ? '<p class="auth-local-email">Ambiente de teste: os códigos chegam à <a href="http://127.0.0.1:54324" target="_blank" rel="noopener">caixa de e-mails local</a>, sem entrega à sua caixa pessoal.</p>' : ''}<small>O acesso é liberado pela equipe do Exclusive. Caso seu e-mail tenha mudado, solicite a atualização do cadastro.</small>`);
   document.querySelector('#login-form').addEventListener('submit', async event => {
     event.preventDefault();
     if (busy) return;
@@ -70,7 +71,7 @@ function showLogin(message = '') {
     try {
       definingPassword = true;
       sessionStorage.setItem('exclusive-define-password', 'yes');
-      const { error } = await client.auth.verifyOtp({ email: pendingEmail, token, type: 'email' });
+      const { error } = await client.auth.verifyOtp({ email: pendingEmail, token, type: 'recovery' });
       if (error) throw error;
     } catch {
       definingPassword = false; sessionStorage.removeItem('exclusive-define-password');
@@ -91,14 +92,17 @@ async function sendCode(email) {
   showLogin();
   let message;
   try {
-    const { error } = await client.auth.signInWithOtp({ email, options: { shouldCreateUser: false } });
-    // Do not disclose whether an email belongs to a registered customer.
-    if (error && !['otp_disabled', 'signup_disabled', 'user_not_found'].includes(error.code)) throw error;
+    // Recovery works for pre-provisioned, unconfirmed accounts while public
+    // signup remains disabled. The recovery endpoint hides unknown addresses.
+    const { error } = await client.auth.resetPasswordForEmail(email);
+    if (error) throw error;
     pendingEmail = email;
     resendAfter = Date.now() + 60000;
     message = 'Se este e-mail estiver cadastrado, você receberá um código. Confira também a caixa de spam.';
-  } catch {
-    message = 'Não foi possível solicitar o código. Aguarde um momento e tente novamente.';
+  } catch (error) {
+    message = ['over_email_send_rate_limit', 'over_request_rate_limit'].includes(error?.code)
+      ? 'O limite de solicitações foi atingido. Aguarde alguns minutos antes de tentar novamente.'
+      : 'Não foi possível enviar o código. Tente novamente em instantes; se persistir, entre em contato com a equipe do Exclusive.';
   } finally { busy = false; showLogin(message); }
 }
 async function signOut() {
@@ -138,23 +142,32 @@ async function openSession(session) {
   if (!userId) { busy = false; pendingEmail = ''; showLogin(); return; }
   shell('<h1>Carregando suas unidades…</h1>');
   try {
-    const [unitsResult, staffResult] = await Promise.all([
-      client.from('units').select('id').limit(1),
-      client.rpc('current_staff_role')
-    ]);
+    const account = await client.rpc('current_account_active');
     if (request !== generation) return;
-    if (unitsResult.error || staffResult.error) throw (unitsResult.error || staffResult.error);
-    if (!unitsResult.data.length) {
+    // Compatibility with the deployed 26-version schema during staged rollout.
+    if (account.error && account.error.code !== 'PGRST202') throw account.error;
+    const permissionsV2 = !account.error;
+    if (permissionsV2 && account.data !== true) {
+      shell('<h1>Conta inativa</h1><p>Seu acesso foi desativado. Entre em contato com a equipe do Exclusive.</p><button id="logout" class="auth-primary">Sair</button>');
+      document.querySelector('#logout').onclick = signOut;
+      return;
+    }
+    const staffResult = await client.rpc('current_staff_role');
+    if (request !== generation) return;
+    if (staffResult.error) throw staffResult.error;
+    const adapter = await createConfiguratorAdapter({
+      client,
+      permissionsV2,
+      staffRole: staffResult.data,
+      onSignOut: signOut
+    });
+    if (request !== generation) return;
+    if (!adapter.units.length && !staffResult.data) {
       shell('<h1>Acesso em preparação</h1><p>Seu login foi reconhecido, mas ainda não há unidades liberadas para você. Entre em contato com a equipe do Exclusive.</p><button id="logout" class="auth-primary">Sair</button>');
       document.querySelector('#logout').onclick = signOut;
       return;
     }
-    const adapter = await createConfiguratorAdapter({
-    client,
-    staffRole: staffResult.data,
-    onSignOut: signOut
-  });
-    if (request !== generation) return;
+    adapter.allowPreview = import.meta.env.DEV && import.meta.env.MODE === 'official';
     mountConfigurator(adapter);
   } catch (error) {
     if (request !== generation) return;

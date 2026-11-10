@@ -2,20 +2,21 @@
 
 ## Comece por aqui
 
+Estado atual e próximo passo: [checkpoint do projeto](docs/EXCLUSIVE_STATUS.md). Leia primeiro; os roteiros datados abaixo podem conter etapas já concluídas.
+
 Plano vigente: [Roteiro para Vinícius e Allef](docs/inicio-vinicius.md). Instalação, login, cadastros, calendários preliminares e homologação. Substitui a ordem de prioridades da passagem inicial.
 
-## Login e progresso por unidade
+## Requisitos atualizados em 27/10/2026
 
-- Cada apartamento mantém suas próprias escolhas de planta e materiais.
-- Trocar de unidade ou voltar ao início preserva as escolhas em memória enquanto a página estiver aberta.
-- “Salvar progresso” grava somente a unidade aberta no Supabase. Alterações não salvas são perdidas ao atualizar ou fechar a página.
-- Ao reabrir, selecione a unidade ou use o botão para continuar o último apartamento salvo.
-- Login por e-mail e senha. Em “Primeiro acesso / Esqueci minha senha”, um código confirma o e-mail e abre a definição de senha. Cadastro público desabilitado.
-- O banco restringe leitura por vínculo cliente–usuário–unidade. O cliente não pode alterar vínculos ou cadastrar unidades.
-- O salvamento exige uma revisão atual para impedir que duas sessões sobrescrevam silenciosamente as escolhas.
-- Os dados antigos do protótipo permanecem no navegador, mas não são importados para contas autenticadas: não existe vínculo verificado entre aqueles dados e um comprador.
+Implementação vigente: [mudanças de sessão, acesso e gestão](docs/implementacao-requisitos-2026-10-27.md). O contrato/PDF será feito depois.
 
-O backend roda localmente durante o desenvolvimento. A confirmação contratual, os prazos e o cálculo oficial ainda não foram implementados; preços e quantitativos continuam fictícios.
+Permissões de produção de 30/10: [atualização preparada e testada](docs/implantacao-permissoes-2026-10-30.md), ainda não aplicada ao Supabase oficial. Validação do novo modelo: `node scripts/test-official-bootstrap-local.mjs` e `node scripts/test-permissions-upgrade-local.mjs`, ambos em bancos temporários locais. Os roteiros antigos que excluem fixtures recusam o novo esquema para preservar histórico.
+
+- A personalização fica apenas na sessão atual. Toda abertura inicia nos padrões da planta-base; sair descarta as escolhas. Não há Salvar progresso nem proposta/parecer técnico.
+- Cada unidade tem uma única conta de cliente. Arquiteta e Admin consultam todas as unidades em uma tabela, inclusive inativas; cliente vê os cards vinculados à sua conta, com cinza e aviso nas inativas, e entra no configurador apenas das ativas.
+- Sem prazo cadastrado, unidade e módulo ficam liberados. Só Admin define/remove/reabre prazos e vincula clientes. A equipe pode ativar/inativar unidades; reabrir uma concluída exige Admin.
+- Login por e-mail e senha; Primeiro acesso solicita um código de recuperação para confirmar o e-mail e definir a senha. Cadastro público desabilitado. O cadastro de clientes ocorre pela função administrativa do servidor.
+- Rascunhos, propostas e pareceres antigos continuam preservados no banco como histórico legado.
 
 ## Executar localmente
 
@@ -43,28 +44,42 @@ As tabelas são criadas pelas migrations em `supabase/migrations`. O seed SQL au
 
 ## Trabalho em equipe
 
-Cada pessoa mantém seu próprio Docker e banco local com dados fictícios. Compartilhamos código e migrations pelo Git; bancos e senhas não são sincronizados. Após receber novas migrations, execute `npx supabase migration up --local`.
+Cada pessoa mantém seu próprio Docker e banco local com dados fictícios. Compartilhamos código e migrations pelo Git; bancos e senhas não são sincronizados. Após receber novas migrations, execute `node scripts/supabase-local.mjs migration up --local`.
 
 - Guia de passagem e plano de cinco dias: [docs/passagem-equipe-2026-09-18.md](docs/passagem-equipe-2026-09-18.md).
 - Laboratório genérico: `/exclusive/laboratorio-imagens.html`; projetos são compartilhados por exportação e importação JSON.
 - Contas de equipe fictícias: `admin.1@example.test` a `admin.3@example.test`, `architect.1@example.test` e `architect.2@example.test`.
-- As arquitetas fictícias ativas ainda acessam todas as unidades. A autorização por unidade permanece pendente; a prioridade atual é login, cadastros e calendários; não ativar esse perfil para atendimento real antes dessa restrição.
+- Arquiteta e Admin acessam todas as unidades por requisito vigente, inclusive inativas. Apenas Admin gerencia contas, vínculos e prazos.
 - Não incluir no Git `.env.local`, credenciais, compradores, backups ou arquivos brutos de Revit/renders. Os arquivos em `assets/` são os recursos necessários para executar o protótipo.
 - Usar branches por tarefa e revisão antes de integrar alterações na `main`. Não alterar migrations já compartilhadas.
+
+## E-mail e primeiro acesso
+
+Implantação com contas da empresa: [configuração oficial do CityPark](docs/configuracao-oficial-autenticacao.md). A configuração pessoal validada localmente é apenas um teste; a implantação oficial está em andamento na conta exclusive@planoaengenharia.com.br.
+
+Projeto oficial com 19 tabelas protegidas e 26 versões registradas. SMTP oficial, primeiro Admin, cadastro de cliente pela função publicada e primeiro acesso por e-mail validados em 29/10/2026. Dados autorizados de validação: um cliente e a unidade 1505 A. [Registro da implantação](docs/implantacao-banco-oficial-2026-10-28.md).
+
+Inventário real cadastrado em 30/10: **389 unidades (209 A + 180 B)**, com identificação por torre/andar/terminação. As 388 novas estão inativas e sem dados técnicos; 1505 A e seu proprietário foram preservados. [Inventário e próximo preenchimento](docs/inventario-unidades-2026-10-30.md).
+
+Validação conectada ao Supabase oficial: `.env.official.local` contém somente URL e chave pública, fora do Git. Execute `npm run dev:official` e acesse `http://127.0.0.1:5175/exclusive/`. Esse modo acessa o banco oficial; alterações administrativas nessa tela afetam os dados oficiais. Não executar scripts de demonstração nele. A inicialização recusa uma URL diferente do projeto oficial ou chave pública ausente.
+
+Para testar com o banco Docker separado, use `npm run dev:local` e `http://127.0.0.1:5173/exclusive/`. `npm run dev` também continua usando a configuração local padrão. Os bancos não sincronizam automaticamente: código/migrations são versionados; dados e contas permanecem em cada ambiente. O frontend ainda não foi publicado no domínio público.
+
+Para gerar os arquivos conectados ao banco oficial, use `npm run build:official`. Gerar o build não publica o site.
+
+Fluxo validado e configuração SMTP: [validação do primeiro acesso](docs/validacao-primeiro-acesso-2026-10-27.md). O SMTP local está conectado ao Resend. O remetente de testes só entrega ao e-mail da conta Resend; verificar domínio antes de liberar entrega aos demais clientes. Credenciais ficam em `supabase/.env.auth-smtp.local`, fora do Git.
 
 ## Futuro ambiente de produção
 
 Aplicar as migrations em um projeto dedicado do Exclusive. Configurar o domínio `/exclusive/`, o modelo de e-mail com código, o SMTP e desabilitar cadastro público também no ambiente remoto. Configurações locais não se transferem automaticamente para um projeto na nuvem.
 
-Provisionamento inicial pela equipe: criar o usuário pelo serviço administrativo de Auth; cadastrar cliente e unidade; relacioná-los em `customer_users` e `customer_units`. Nunca colocar chave administrativa no frontend. A interface administrativa de cadastro será uma próxima entrega.
+Provisionamento inicial pela equipe: criar o usuário pelo serviço administrativo de Auth; cadastrar cliente e unidade; relacioná-los em `customer_users` e `customer_units`. Nunca colocar chave administrativa no frontend. A interface administrativa de cadastro utiliza a função `admin-customer`; mantenha as Edge Functions ativas.
 
 O build (`npm run build`) gera `dist/`, incluindo imagens, para publicação em `/exclusive/`. A hospedagem deve encaminhar as rotas dessa aplicação ao seu `index.html`.
 
 ### Verificação
 
-Execute `npm test` e `npm run build`. Os testes cobrem isolamento entre unidades, recuperação, limpeza ao sair, dados inválidos, falhas e respostas atrasadas de salvamento.
-
-Com o Supabase local iniciado e as contas fictícias criadas, `npm run test:access-local` verifica o login por código e as permissões pela API real, incluindo tentativa de ler/salvar outra unidade, alteração de vínculos, conflito de revisão e bloqueio do cadastro público. Esse teste salva um rascunho na unidade fictícia 1209A.
+Execute `npm test`, `npm run build` e `npm run test:db-local`. Os testes atuais cobrem descarte da sessão, padrões, dependências entre módulos, isolamento por conta, equipe em unidade inativa, prazos e cadastro administrativo. Com Vite e Edge Functions locais ativos, `npm run test:requirements-ui-local` valida a jornada dos três perfis com dados temporários; `npm run test:customizer-layout-local` verifica o layout em sete dimensões. Veja configuração de Playwright e lembretes em [implementação dos requisitos](docs/implementacao-requisitos-2026-10-27.md).
 
 ## Principal mudança desta versão
 
