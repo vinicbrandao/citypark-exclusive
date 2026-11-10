@@ -54,6 +54,9 @@ export async function createConfiguratorAdapter({ client, staffRole, onSignOut, 
     onManageUnit: (id, customer, date, modules) => mutate('manage_unit', {
       p_unit_id: id, p_customer_id: customer, p_closes_at: date, p_module_deadlines: modules
     }),
+    onConfirmCommercialOwner: (id, customer, revision) => mutate('confirm_commercial_owner', {
+      p_unit_id: id, p_customer_id: customer, p_revision: revision
+    }),
     onRegisterCustomer: async (name, email, phone = null, customerId = null) => {
       await invoke('admin-customer', { name, email,
         ...(permissionsV2 ? { phone, customerId, action: customerId ? 'update' : 'create' } : {}) });
@@ -99,6 +102,14 @@ export async function createConfiguratorAdapter({ client, staffRole, onSignOut, 
     const entries = Object.entries(queries);
     const results = await Promise.all(entries.map(([, query]) => query));
     entries.forEach(([key], index) => { rows[key] = check(results[index]); });
+    const commercialReviews = new Map();
+    if (staffRole === 'admin' || staffRole === 'architect') {
+      const result = await client.rpc('list_commercial_owner_reviews');
+      // Older environments can still use the existing administration screens.
+      if (result.error?.code !== 'PGRST202') {
+        for (const review of check(result)) commercialReviews.set(review.unit_id, review.revision);
+      }
+    }
     adapter.customers = rows.customers;
     adapter.modules = rows.modules;
     adapter.units = rows.units.map(unit => {
@@ -108,6 +119,7 @@ export async function createConfiguratorAdapter({ client, staffRole, onSignOut, 
         id: unit.id, label: unit.code, tower: unit.tower, towerCode: unit.tower_code,
         floor: unit.floor_label, termination: unit.termination, type: unit.typology, areaM2: unit.area_m2,
         active: unit.active, customizationStatus: unit.customization_status,
+        commercialReviewRevision: commercialReviews.get(unit.id),
         customizationClosesAt: unit.customization_closes_at,
         customizationDeadline: formatDeadline(unit.customization_closes_at),
         plantDeadline: formatDeadline(windows.find(w => w.module_code === 'planta')?.closes_at),

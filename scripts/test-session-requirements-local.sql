@@ -12,7 +12,8 @@ insert into public.units(id,code,tower,floor_label,termination,typology,active)
 values(:'test_unit_id', 'REQ-' || :'test_unit_id', 'Teste','Teste','09A','Teste',true);
 insert into public.unit_base_plan_assignments(unit_id,base_plan_id) values(:'test_unit_id',:'plan_id');
 insert into public.customer_units(customer_id,unit_id) values(:'customer_id',:'test_unit_id');
-select set_config('test.unit', :'test_unit_id', true), set_config('test.plan', :'plan_id', true);
+select set_config('test.unit', :'test_unit_id', true), set_config('test.plan', :'plan_id', true),
+  set_config('test.customer', :'customer_id', true);
 
 set local role authenticated;
 select set_config('request.jwt.claim.sub', :'customer_user_id', true);
@@ -25,6 +26,10 @@ do $$ begin
   begin
     perform public.set_unit_active(current_setting('test.unit')::uuid,false);
     raise exception 'Customer changed unit status';
+  exception when insufficient_privilege then null; end;
+  begin
+    perform public.set_unit_customer(current_setting('test.unit')::uuid,null);
+    raise exception 'Customer changed the owner link';
   exception when insufficient_privilege then null; end;
   begin
     perform public.save_unit_module_choices(null,current_setting('test.unit')::uuid,'planta','{}',0);
@@ -96,15 +101,21 @@ reset role;
 update public.units set active=false,customization_status='completed' where id=:'test_unit_id';
 set local role authenticated;
 select set_config('request.jwt.claim.sub', :'architect_id', true);
-do $$ begin
-  begin perform public.set_unit_active(current_setting('test.unit')::uuid,true);
-    raise exception 'Architect reopened completed unit'; exception when insufficient_privilege then null; end;
-end $$;
-select set_config('request.jwt.claim.sub', :'admin_id', true);
 select public.set_unit_active(:'test_unit_id',true);
+select public.set_unit_customer(:'test_unit_id',null);
 do $$ begin
   if not exists(select 1 from public.units where id=current_setting('test.unit')::uuid and active and customization_status='pending')
-    then raise exception 'Admin reopening did not reset status'; end if;
+    then raise exception 'Architect reopening did not reset status'; end if;
+  if exists(select 1 from public.customer_units where unit_id=current_setting('test.unit')::uuid and active)
+    then raise exception 'Architect could not remove the owner link'; end if;
+  begin
+    perform public.manage_unit(current_setting('test.unit')::uuid,current_setting('test.customer')::uuid,null,'{}');
+    raise exception 'Architect accessed the deadline management RPC';
+  exception when insufficient_privilege then null; end;
+end $$;
+select public.set_unit_customer(:'test_unit_id',:'customer_id');
+select set_config('request.jwt.claim.sub', :'admin_id', true);
+do $$ begin
   begin
     perform public.manage_unit(current_setting('test.unit')::uuid,null,clock_timestamp()+interval '2 days','{"missing-module":null}');
     raise exception 'Invalid batch succeeded'; exception when invalid_parameter_value then null; end;
@@ -116,6 +127,9 @@ reset role;
 do $$ begin
   if (select count(*) from public.unit_activity_events where unit_id=current_setting('test.unit')::uuid) < 6
     then raise exception 'Missing audit events'; end if;
+  if (select count(*) from public.unit_activity_events where unit_id=current_setting('test.unit')::uuid
+      and action='unit_customer_changed' and actor_role='architect') <> 2
+    then raise exception 'Owner link changes did not record the architect'; end if;
 end $$;
 rollback;
 select 'PASS: transient choices, defaults, inactive staff access, customer isolation, admin deadlines, dependencies, legacy write revocation and audit; fixtures rolled back';

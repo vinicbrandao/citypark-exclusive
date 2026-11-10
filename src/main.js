@@ -167,6 +167,7 @@ async function openSession(session) {
       document.querySelector('#logout').onclick = signOut;
       return;
     }
+    adapter.allowPreview = import.meta.env.DEV && import.meta.env.MODE === 'official';
     mountConfigurator(adapter);
   } catch (error) {
     if (request !== generation) return;
